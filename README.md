@@ -42,6 +42,18 @@ Edit `backend/.env` to choose a translation provider:
 
 Only the key for the provider you selected is required.
 
+## Run the automated tests
+
+```bash
+cd backend
+.venv\Scripts\python -m pytest tests/ -v
+```
+
+Unit tests for the trickiest pure logic - VTT caption parsing/dedup (using a real captured
+sample), the SRT formatter, the rate limiter, Gemini quota-error detection, glossary storage,
+and YouTube URL parsing. No network access or API keys needed; everything below this still
+needs manual testing (real YouTube videos, real LLM calls, the extension's page injection).
+
 ## Test the web app
 
 ```bash
