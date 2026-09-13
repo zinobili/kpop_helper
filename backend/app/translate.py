@@ -1,15 +1,25 @@
 import json
+import logging
 import re
-from typing import List
+import time
+from typing import Callable, List, Optional
 
 from . import config, glossary
+from .rate_limiter import RateLimiter
 from .vtt_utils import Cue
+
+logger = logging.getLogger("kpop_helper.translate")
 
 _BATCH_SIZE = 40
 
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 _LANG_NAMES = {"ko": "Korean", "en": "English"}
+
+# Shared across all jobs/threads: the RPM cap is per Gemini API key/project, not per video.
+_gemini_limiter = RateLimiter(config.GEMINI_RPM, period_seconds=60.0)
+
+BatchProgressCallback = Callable[[int, int], None]
 
 
 def _system_prompt() -> str:
@@ -64,9 +74,38 @@ def _translate_batch_anthropic(texts: List[str], source_lang: str) -> List[str]:
     return _parse_json_objects(raw, len(texts))
 
 
+def _extract_retry_delay_seconds(exc: Exception) -> Optional[float]:
+    """Best-effort read of how long Gemini wants us to wait before retrying a 429."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers:
+        header_value = headers.get("Retry-After")
+        if header_value:
+            try:
+                return float(header_value)
+            except ValueError:
+                pass
+
+    # Gemini quota errors typically include a RetryInfo detail like {"retryDelay": "20s"}.
+    details = getattr(exc, "details", None)
+    error_details = None
+    if isinstance(details, dict):
+        error_details = details.get("details") or details.get("error", {}).get("details")
+    if isinstance(error_details, list):
+        for detail in error_details:
+            delay = detail.get("retryDelay") if isinstance(detail, dict) else None
+            if isinstance(delay, str) and delay.endswith("s"):
+                try:
+                    return float(delay[:-1])
+                except ValueError:
+                    pass
+    return None
+
+
 def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
     from google import genai
     from google.genai import types
+    from google.genai.errors import ClientError
 
     if not config.GEMINI_API_KEY:
         raise RuntimeError(
@@ -74,15 +113,34 @@ def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
             "Get a free key at https://aistudio.google.com/apikey"
         )
     client = genai.Client(api_key=config.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=config.GEMINI_MODEL,
-        contents=_user_prompt(texts, source_lang),
-        config=types.GenerateContentConfig(
-            system_instruction=_system_prompt(),
-            response_mime_type="application/json",
-        ),
-    )
-    return _parse_json_objects(response.text, len(texts))
+
+    for attempt in range(config.GEMINI_MAX_RETRIES + 1):
+        # Proactively pace requests to stay under the RPM cap, rather than only reacting
+        # to 429s after the fact - this is what actually prevents most rate-limit errors.
+        _gemini_limiter.acquire()
+        try:
+            response = client.models.generate_content(
+                model=config.GEMINI_MODEL,
+                contents=_user_prompt(texts, source_lang),
+                config=types.GenerateContentConfig(
+                    system_instruction=_system_prompt(),
+                    response_mime_type="application/json",
+                ),
+            )
+            return _parse_json_objects(response.text, len(texts))
+        except ClientError as exc:
+            if exc.code != 429 or attempt == config.GEMINI_MAX_RETRIES:
+                raise
+            delay = _extract_retry_delay_seconds(exc)
+            if delay is None:
+                delay = min(60.0, 5.0 * (2**attempt))  # exponential fallback: 5s, 10s, 20s, 40s...
+            logger.warning(
+                "Gemini rate-limited (attempt %d/%d); retrying in %.1fs",
+                attempt + 1,
+                config.GEMINI_MAX_RETRIES,
+                delay,
+            )
+            time.sleep(delay)
 
 
 def _translate_batch_once(texts: List[str], source_lang: str) -> List[str]:
@@ -103,10 +161,14 @@ def _translate_batch(texts: List[str], source_lang: str) -> List[str]:
         return _translate_batch_once(texts, source_lang)
 
 
-def translate_cues(cues: List[Cue], source_lang: str) -> List[str]:
+def translate_cues(
+    cues: List[Cue], source_lang: str, on_batch: Optional[BatchProgressCallback] = None
+) -> List[str]:
     results: List[str] = []
-    for i in range(0, len(cues), _BATCH_SIZE):
-        batch = cues[i : i + _BATCH_SIZE]
+    batches = [cues[i : i + _BATCH_SIZE] for i in range(0, len(cues), _BATCH_SIZE)]
+    for batch_num, batch in enumerate(batches, start=1):
+        if on_batch:
+            on_batch(batch_num, len(batches))
         texts = [c.text for c in batch]
         results.extend(_translate_batch(texts, source_lang))
     return results

@@ -115,6 +115,29 @@ curl -X POST http://127.0.0.1:8000/glossary -H "Content-Type: application/json" 
 curl http://127.0.0.1:8000/glossary
 ```
 
+## Troubleshooting
+
+**"Sign in to confirm you're not a bot" / caption fetch fails on every video, including
+previously-working ones.** YouTube periodically walls off `yt-dlp` (the library we use to
+fetch captions/audio) this way - it's an anti-bot measure on YouTube's side, not a bug in a
+specific video. Fix: export your logged-in YouTube cookies to a file and point the backend
+at it (works even while your browser stays open, which you'll want for the extension):
+
+1. Install a "cookies.txt" export extension for your browser (e.g. search your browser's
+   extension store for "Get cookies.txt LOCALLY" - use one with source available/many
+   installs, since it can read your session cookies).
+2. Go to https://www.youtube.com while logged in, click the extension, export cookies for
+   this site, and save the file as `backend/data/cookies.txt`.
+3. Set `YTDLP_COOKIES_FILE=./data/cookies.txt` in `backend/.env` (already the default in
+   `.env.example`).
+
+Treat that file like a password - it's a snapshot of your logged-in session (`backend/data/`
+is already gitignored, so it won't get committed). Re-export it if it stops working (cookies
+expire). The alternative, `YTDLP_COOKIES_FROM_BROWSER=<browser>`, reads the browser's live
+cookie database directly - simpler, but it only works while that browser is fully closed
+(otherwise you'll see a "cookie database is locked" / "Permission denied" error), which
+conflicts with keeping your browser open to use the extension.
+
 ## Cost
 
 - **Gemini**: free tier, rate-limited (requests/minute and a daily quota — check current limits

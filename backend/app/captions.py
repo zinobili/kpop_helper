@@ -1,4 +1,8 @@
+import logging
+import re
+from pathlib import Path
 from typing import List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import yt_dlp
@@ -6,13 +10,52 @@ import yt_dlp
 from . import config
 from .vtt_utils import Cue, parse_vtt
 
+logger = logging.getLogger("kpop_helper.captions")
+
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def extract_video_id_from_url(url: str) -> Optional[str]:
+    """Best-effort, network-free video ID parse for the common YouTube URL shapes.
+
+    Used only to short-circuit to the cache before ever calling yt-dlp; any URL shape this
+    doesn't recognize falls back to yt-dlp's own (network) extraction, so this never needs
+    to be exhaustive.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if host in ("youtu.be",):
+        candidate = parsed.path.lstrip("/").split("/")[0]
+    elif "youtube.com" in host:
+        if parsed.path == "/watch":
+            candidate = (parse_qs(parsed.query).get("v") or [""])[0]
+        elif parsed.path.startswith(("/shorts/", "/embed/", "/live/")):
+            candidate = parsed.path.split("/")[2] if len(parsed.path.split("/")) > 2 else ""
+        else:
+            return None
+    else:
+        return None
+    return candidate if _VIDEO_ID_RE.match(candidate) else None
+
+
+def _ydl_opts(**extra) -> dict:
+    opts = {"quiet": True, "no_warnings": True, **extra}
+    if config.YTDLP_COOKIES_FILE:
+        if Path(config.YTDLP_COOKIES_FILE).is_file():
+            opts["cookiefile"] = config.YTDLP_COOKIES_FILE
+        else:
+            logger.warning(
+                "YTDLP_COOKIES_FILE=%s is set but doesn't exist yet - proceeding without "
+                "cookies (see README Troubleshooting to export one).",
+                config.YTDLP_COOKIES_FILE,
+            )
+    elif config.YTDLP_COOKIES_FROM_BROWSER:
+        opts["cookiesfrombrowser"] = (config.YTDLP_COOKIES_FROM_BROWSER,)
+    return opts
+
 
 def extract_video_info(url: str) -> dict:
-    ydl_opts = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-    }
+    ydl_opts = _ydl_opts(skip_download=True)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         return ydl.extract_info(url, download=False)
 

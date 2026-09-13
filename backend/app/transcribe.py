@@ -4,6 +4,7 @@ from typing import List
 import yt_dlp
 
 from . import config
+from .captions import _ydl_opts
 from .vtt_utils import Cue
 
 _model = None
@@ -20,19 +21,17 @@ def _get_model():
 
 def download_audio(url: str, video_id: str) -> Path:
     out_template = str(config.AUDIO_DIR / f"{video_id}.%(ext)s")
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": out_template,
-        "quiet": True,
-        "no_warnings": True,
-        "postprocessors": [
+    ydl_opts = _ydl_opts(
+        format="bestaudio/best",
+        outtmpl=out_template,
+        postprocessors=[
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "wav",
                 "preferredquality": "192",
             }
         ],
-    }
+    )
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.extract_info(url, download=True)
     return config.AUDIO_DIR / f"{video_id}.wav"

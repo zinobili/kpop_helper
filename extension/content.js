@@ -114,14 +114,21 @@
     if (overlayEl) overlayEl.innerHTML = "";
   }
 
+  function showError(message) {
+    statusEl.textContent = `Error: ${message}`;
+    statusEl.title = message; // full text on hover - the pill itself truncates with an ellipsis
+    console.error("[kpop_helper]", message);
+  }
+
   async function onLoadClick() {
     loadBtn.disabled = true;
     statusEl.textContent = "Submitting...";
+    statusEl.title = "";
     try {
       const { job_id } = await apiRequest("POST", "/process", { url: location.href });
       pollJob(job_id);
     } catch (err) {
-      statusEl.textContent = `Error: ${err.message}`;
+      showError(err.message);
       loadBtn.disabled = false;
     }
   }
@@ -132,7 +139,8 @@
       try {
         const job = await apiRequest("GET", `/jobs/${jobId}`);
         if (job.status === "running") {
-          statusEl.textContent = STAGE_LABELS[job.stage] || "Processing...";
+          const label = STAGE_LABELS[job.stage] || "Processing...";
+          statusEl.textContent = job.detail ? `${label} (${job.detail})` : label;
         } else if (job.status === "done") {
           clearInterval(pollTimer);
           cues = job.result.cues.map((c) => ({ start: c.start, end: c.end, text: c.text_zh }));
@@ -147,12 +155,12 @@
           startSync();
         } else if (job.status === "error") {
           clearInterval(pollTimer);
-          statusEl.textContent = `Error: ${job.error}`;
+          showError(job.error);
           loadBtn.disabled = false;
         }
       } catch (err) {
         clearInterval(pollTimer);
-        statusEl.textContent = `Error: ${err.message}`;
+        showError(err.message);
         loadBtn.disabled = false;
       }
     }, 1500);

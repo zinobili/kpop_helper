@@ -227,7 +227,8 @@ function pollJob(jobId) {
       const job = await resp.json();
 
       if (job.status === "running") {
-        setStatus(STAGE_LABELS[job.stage] || "Processing...");
+        const label = STAGE_LABELS[job.stage] || "Processing...";
+        setStatus(job.detail ? `${label} (${job.detail})` : label);
       } else if (job.status === "done") {
         clearInterval(pollTimer);
         setStatus(job.result.cached ? "Loaded from cache." : "Done.");
