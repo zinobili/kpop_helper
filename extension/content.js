@@ -8,6 +8,11 @@
     done: "Done.",
   };
 
+  const FONT_SIZE_KEY = "khFontSize";
+  const MIN_FONT_SIZE = 14;
+  const MAX_FONT_SIZE = 44;
+  const DEFAULT_FONT_SIZE = 22;
+
   let currentVideoId = null;
   let cues = [];
   let visible = true;
@@ -17,6 +22,22 @@
   let statusEl = null;
   let loadBtn = null;
   let overlayEl = null;
+  let fontSize = DEFAULT_FONT_SIZE;
+
+  function applyFontSize() {
+    if (overlayEl) overlayEl.style.setProperty("--kh-font-size", `${fontSize}px`);
+  }
+
+  function changeFontSize(delta) {
+    fontSize = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, fontSize + delta));
+    applyFontSize();
+    chrome.storage.sync.set({ [FONT_SIZE_KEY]: fontSize });
+  }
+
+  chrome.storage.sync.get({ [FONT_SIZE_KEY]: DEFAULT_FONT_SIZE }, (items) => {
+    fontSize = items[FONT_SIZE_KEY];
+    applyFontSize();
+  });
 
   function apiRequest(method, path, body) {
     return new Promise((resolve, reject) => {
@@ -57,14 +78,27 @@
     loadBtn.title = "Load Traditional Chinese subtitles";
     loadBtn.addEventListener("click", onLoadClick);
 
+    const sizeDownBtn = document.createElement("button");
+    sizeDownBtn.textContent = "A-";
+    sizeDownBtn.title = "Smaller subtitles";
+    sizeDownBtn.addEventListener("click", () => changeFontSize(-2));
+
+    const sizeUpBtn = document.createElement("button");
+    sizeUpBtn.textContent = "A+";
+    sizeUpBtn.title = "Larger subtitles";
+    sizeUpBtn.addEventListener("click", () => changeFontSize(2));
+
     statusEl = document.createElement("span");
     statusEl.id = "kh-status";
 
     controlEl.appendChild(loadBtn);
+    controlEl.appendChild(sizeDownBtn);
+    controlEl.appendChild(sizeUpBtn);
     controlEl.appendChild(statusEl);
 
     overlayEl = document.createElement("div");
     overlayEl.id = "kh-subtitle-overlay";
+    applyFontSize();
 
     player.appendChild(controlEl);
     player.appendChild(overlayEl);

@@ -55,7 +55,7 @@
   display: inline-block;
   background: rgba(0, 0, 0, 0.72);
   color: #fff;
-  font-size: clamp(15px, 2.2vw, 24px);
+  font-size: var(--kh-font-size, 22px);
   line-height: 1.4;
   padding: 4px 14px;
   border-radius: 4px;
