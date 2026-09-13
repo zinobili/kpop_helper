@@ -6,9 +6,11 @@ fandom-aware nuance, instead of relying on Korean audio or English captions.
 ## Status
 
 **Stage 1**: backend pipeline, usable via CLI or a local API. **Done.**
-**Stage 2 (current)**: local web app - paste a URL, watch with a synced subtitle overlay,
+**Stage 2**: local web app - paste a URL, watch with a synced subtitle overlay,
 or download the `.srt`. **Done.**
-Later stages: Chrome extension overlay (watch directly on youtube.com), live-stream support.
+**Stage 3 (current)**: Chrome extension - overlay directly on youtube.com while watching
+normally. **Done.**
+Later stages: live-stream support.
 
 ## How it works
 
@@ -71,6 +73,24 @@ cd backend
 
 This writes a `<video_id>.srt` file with Traditional Chinese subtitles directly, without
 starting the web server.
+
+## Test the Chrome extension
+
+The backend must be running first (`.venv\Scripts\uvicorn app.main:app --reload` from `backend/`).
+
+1. Open `chrome://extensions` in Chrome, enable **Developer mode** (top-right toggle).
+2. Click **Load unpacked** and select the `extension/` folder.
+3. Go to any YouTube video (e.g. `https://www.youtube.com/watch?v=yLGXM5O8v5Q`). A small
+   **翻譯** (Translate) button appears in the top-right corner of the player.
+4. Click it - status text shows progress (fetching/transcribing/translating), then the
+   button becomes **隱藏字幕** (Hide subtitles) and the overlay starts syncing with playback.
+   If YouTube's native captions also appear, click the video's own **CC** button to turn
+   them off.
+5. Click the extension's toolbar icon to change the backend URL if it's not running on the
+   default `http://127.0.0.1:8000` (e.g. if you later host the backend elsewhere).
+
+The extension talks to the backend from its background service worker (not the page itself),
+so no CORS configuration is needed on the backend.
 
 ## API reference
 
