@@ -5,6 +5,7 @@
     fetching_captions: "Fetching captions...",
     transcribing_audio: "Transcribing audio locally (can take a few minutes)...",
     translating: "Translating to Traditional Chinese...",
+    skipping_translation: "Skipping translation (original-language subtitles)...",
     done: "Done.",
   };
 
@@ -125,7 +126,14 @@
     statusEl.textContent = "Submitting...";
     statusEl.title = "";
     try {
-      const { job_id } = await apiRequest("POST", "/process", { url: location.href });
+      const { forceStt, skipTranslation } = await new Promise((resolve) =>
+        chrome.storage.sync.get({ forceStt: false, skipTranslation: false }, resolve)
+      );
+      const { job_id } = await apiRequest("POST", "/process", {
+        url: location.href,
+        force_stt: forceStt,
+        skip_translation: skipTranslation,
+      });
       pollJob(job_id);
     } catch (err) {
       showError(err.message);

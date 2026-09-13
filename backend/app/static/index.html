@@ -131,6 +131,12 @@
     <label class="checkbox-row">
       <input type="checkbox" id="forceRefresh" /> Force re-process (ignore cache)
     </label>
+    <label class="checkbox-row">
+      <input type="checkbox" id="forceStt" /> Force STT (ignore existing captions, always transcribe with Whisper)
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" id="skipTranslation" /> Skip translation (show original-language transcript, no LLM call)
+    </label>
     <div class="size-row">
       <label for="fontSizeSlider">Subtitle size</label>
       <input type="range" id="fontSizeSlider" min="14" max="44" step="1" value="22" />
@@ -169,6 +175,8 @@ const API = "";
 const urlInput = document.getElementById("urlInput");
 const loadBtn = document.getElementById("loadBtn");
 const forceRefresh = document.getElementById("forceRefresh");
+const forceStt = document.getElementById("forceStt");
+const skipTranslation = document.getElementById("skipTranslation");
 const statusEl = document.getElementById("status");
 const videoTitleEl = document.getElementById("videoTitle");
 const playerShell = document.getElementById("playerShell");
@@ -181,8 +189,9 @@ const STAGE_LABELS = {
   queued: "Queued...",
   looking_up_video: "Looking up video...",
   fetching_captions: "Fetching captions...",
-  transcribing_audio: "No captions found - transcribing audio locally (this can take a few minutes)...",
+  transcribing_audio: "Transcribing audio locally (this can take a few minutes)...",
   translating: "Translating to Traditional Chinese...",
+  skipping_translation: "Skipping translation (showing original-language transcript)...",
   done: "Done.",
 };
 
@@ -207,7 +216,12 @@ async function startProcessing() {
     const resp = await fetch(`${API}/process`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, force_refresh: forceRefresh.checked }),
+      body: JSON.stringify({
+        url,
+        force_refresh: forceRefresh.checked,
+        force_stt: forceStt.checked,
+        skip_translation: skipTranslation.checked,
+      }),
     });
     if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
     const { job_id } = await resp.json();
@@ -251,7 +265,8 @@ function showResult(result) {
   cues = result.cues.map(c => ({ start: c.start, end: c.end, text: c.text_zh }));
   videoTitleEl.textContent = result.title;
   videoTitleEl.style.display = "block";
-  sourceBadge.textContent = `source: ${result.source_lang} (${result.source_type})`;
+  sourceBadge.textContent = `source: ${result.source_lang} (${result.source_type})`
+    + (result.translated ? "" : " - untranslated");
   downloadLink.href = `${API}/subtitles/${result.video_id}.srt`;
   downloadLink.setAttribute("download", `${result.video_id}.srt`);
   metaRow.style.display = "flex";

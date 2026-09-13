@@ -64,11 +64,22 @@ Open http://127.0.0.1:8000 in a browser:
 
 Re-loading the same URL is instant (served from cache) unless you check **Force re-process**.
 
+Two more checkboxes control the pipeline itself:
+
+- **Force STT** - ignore any existing YouTube captions and always transcribe the audio with
+  Whisper. Useful when a video's captions are wrong/low-quality/missing entirely for your
+  purposes.
+- **Skip translation** - output the original-language transcript as-is, with no LLM call at
+  all. Useful to check STT/caption quality on its own, or as a quota-free fallback when the
+  translation provider is rate-limited/exhausted (see [Cost](#cost)). Results from this mode
+  are never cached or written over a video's real translated result.
+
 ## Test on the CLI
 
 ```bash
 cd backend
 .venv\Scripts\python cli.py "https://www.youtube.com/watch?v=yLGXM5O8v5Q"
+# add --force-stt and/or --skip-translation for the same overrides as the web app
 ```
 
 This writes a `<video_id>.srt` file with Traditional Chinese subtitles directly, without
@@ -87,7 +98,9 @@ The backend must be running first (`.venv\Scripts\uvicorn app.main:app --reload`
    If YouTube's native captions also appear, click the video's own **CC** button to turn
    them off.
 5. Click the extension's toolbar icon to change the backend URL if it's not running on the
-   default `http://127.0.0.1:8000` (e.g. if you later host the backend elsewhere).
+   default `http://127.0.0.1:8000` (e.g. if you later host the backend elsewhere), or to
+   toggle **Force STT** / **Skip translation** (same meaning as the web app's checkboxes -
+   see [Test the web app](#test-the-web-app)) - these apply the next time you click 翻譯.
 
 The extension talks to the backend from its background service worker (not the page itself),
 so no CORS configuration is needed on the backend.
@@ -96,6 +109,7 @@ so no CORS configuration is needed on the backend.
 
 ```bash
 # Start a translation job (returns a job_id immediately; processing runs in the background)
+# Optional body fields: force_refresh, force_stt, skip_translation (all default false)
 curl -X POST http://127.0.0.1:8000/process -H "Content-Type: application/json" \
   -d "{\"url\": \"https://www.youtube.com/watch?v=yLGXM5O8v5Q\"}"
 

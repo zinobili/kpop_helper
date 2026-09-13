@@ -17,6 +17,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 class ProcessRequest(BaseModel):
     url: str
     force_refresh: bool = False
+    force_stt: bool = False  # ignore existing YouTube captions, always transcribe via Whisper
+    skip_translation: bool = False  # output the original-language transcript, no LLM call
 
 
 @app.get("/health")
@@ -26,7 +28,12 @@ def health():
 
 @app.post("/process")
 def process(req: ProcessRequest):
-    job_id = jobs.create_job(req.url, force_refresh=req.force_refresh)
+    job_id = jobs.create_job(
+        req.url,
+        force_refresh=req.force_refresh,
+        force_stt=req.force_stt,
+        skip_translation=req.skip_translation,
+    )
     return {"job_id": job_id}
 
 
