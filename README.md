@@ -140,8 +140,15 @@ conflicts with keeping your browser open to use the extension.
 
 ## Cost
 
-- **Gemini**: free tier, rate-limited (requests/minute and a daily quota — check current limits
-  at https://ai.google.dev/pricing before processing many videos back-to-back).
+- **Gemini**: free tier, rate-limited two ways - both confirmed by hitting them directly, since
+  Google no longer publishes a fixed table:
+  - **~5 requests/minute** for `gemini-3.6-flash` - the backend paces requests to stay under
+    this automatically (`GEMINI_RPM` in `.env`), so it shouldn't surface as an error.
+  - **As low as 20 requests/day** for the same model - this is the one that actually bites,
+    since it can't be paced around. `TRANSLATE_BATCH_SIZE` (default 200 lines/request) exists
+    to stretch a day's quota across more videos; hitting it anyway fails fast with a clear
+    message rather than wasting minutes retrying (it resets roughly every 24h). If you're
+    doing more than light testing, switch to `TRANSLATION_PROVIDER=anthropic`.
 - **Anthropic** (`claude-sonnet-5`): pay-as-you-go, $2/1M input tokens + $10/1M output tokens.
   A ~1-hour dialogue-heavy episode (~500 caption lines) costs roughly $0.10-0.15; a short MV
   with sparse lyrics costs a fraction of a cent. Charged once per video — cached re-processing
