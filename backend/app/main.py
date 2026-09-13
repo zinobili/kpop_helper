@@ -1,12 +1,17 @@
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cache, glossary, pipeline
+from . import cache, glossary, jobs
 from .srt_utils import cues_to_srt
 from .vtt_utils import Cue
 
 app = FastAPI(title="kpop_helper backend")
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 class ProcessRequest(BaseModel):
@@ -21,10 +26,16 @@ def health():
 
 @app.post("/process")
 def process(req: ProcessRequest):
-    try:
-        return pipeline.process_video(req.url, force_refresh=req.force_refresh)
-    except Exception as exc:  # surfaced to the caller for now; stage 1 is local-only
-        raise HTTPException(status_code=500, detail=str(exc))
+    job_id = jobs.create_job(req.url, force_refresh=req.force_refresh)
+    return {"job_id": job_id}
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    job = jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job_id.")
+    return job
 
 
 @app.get("/subtitles/{video_id}.srt", response_class=PlainTextResponse)
@@ -52,3 +63,11 @@ def delete_glossary(term: str):
     if not glossary.delete_entry(term):
         raise HTTPException(status_code=404, detail="Term not found.")
     return {"status": "ok"}
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

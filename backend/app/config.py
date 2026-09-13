@@ -6,7 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.getenv("DATA_DIR", BACKEND_DIR / "data")).resolve()
+
+# A relative DATA_DIR (the default, and what .env.example ships) must anchor to
+# BACKEND_DIR rather than the process's current working directory - otherwise running
+# uvicorn from a different cwd (e.g. via `--app-dir`) silently reads/writes a second,
+# empty data directory instead of the one the CLI uses.
+_data_dir = Path(os.getenv("DATA_DIR", "./data"))
+if not _data_dir.is_absolute():
+    _data_dir = BACKEND_DIR / _data_dir
+DATA_DIR = _data_dir.resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini" or "anthropic"

@@ -5,8 +5,10 @@ fandom-aware nuance, instead of relying on Korean audio or English captions.
 
 ## Status
 
-**Stage 1 (current)**: backend pipeline only, usable via CLI or a local API.
-Later stages: web app UI, Chrome extension overlay, live-stream support.
+**Stage 1**: backend pipeline, usable via CLI or a local API. **Done.**
+**Stage 2 (current)**: local web app - paste a URL, watch with a synced subtitle overlay,
+or download the `.srt`. **Done.**
+Later stages: Chrome extension overlay (watch directly on youtube.com), live-stream support.
 
 ## How it works
 
@@ -38,6 +40,28 @@ Edit `backend/.env` to choose a translation provider:
 
 Only the key for the provider you selected is required.
 
+## Test the web app
+
+```bash
+cd backend
+.venv\Scripts\uvicorn app.main:app --reload
+```
+
+Open http://127.0.0.1:8000 in a browser:
+
+1. Paste a YouTube URL and click **Load**. Status updates show the current stage (fetching
+   captions / transcribing / translating) - translating ~500 lines can take a minute or two
+   on Gemini's free tier.
+2. Once done, the video plays inline with a Traditional Chinese subtitle overlay synced to
+   playback (if YouTube's own captions also appear, click the video's **CC** button to turn
+   them off so they don't clash with the overlay).
+3. Use **Download .srt** to get the subtitle file for any other player (e.g. VLC on a
+   downloaded copy of the video).
+4. The **Glossary** panel lets you add/remove terms (idol names, group names, fandom slang)
+   that future translations will use for consistency.
+
+Re-loading the same URL is instant (served from cache) unless you check **Force re-process**.
+
 ## Test on the CLI
 
 ```bash
@@ -45,23 +69,20 @@ cd backend
 .venv\Scripts\python cli.py "https://www.youtube.com/watch?v=yLGXM5O8v5Q"
 ```
 
-This writes a `<video_id>.srt` file with Traditional Chinese subtitles. Open the video in
-VLC (or download it for personal testing with `yt-dlp`) and load the `.srt` as an external
-subtitle track to check timing and translation quality.
+This writes a `<video_id>.srt` file with Traditional Chinese subtitles directly, without
+starting the web server.
 
-## Test via the local API
-
-```bash
-cd backend
-.venv\Scripts\uvicorn app.main:app --reload
-```
-
-Then, e.g. with `curl`:
+## API reference
 
 ```bash
+# Start a translation job (returns a job_id immediately; processing runs in the background)
 curl -X POST http://127.0.0.1:8000/process -H "Content-Type: application/json" \
   -d "{\"url\": \"https://www.youtube.com/watch?v=yLGXM5O8v5Q\"}"
 
+# Poll job status/result
+curl http://127.0.0.1:8000/jobs/<job_id>
+
+# Once done, fetch the cached subtitle file directly
 curl http://127.0.0.1:8000/subtitles/yLGXM5O8v5Q.srt
 ```
 

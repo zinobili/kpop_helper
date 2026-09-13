@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kpop_helper</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8e9ec;
+    --muted: #8a8f9c;
+    --accent: #ff5c8a;
+    --accent-dim: #7a2f45;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle-note { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 8px; }
+  input[type="text"] {
+    flex: 1;
+    background: #0d0f13;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  input[type="text"]:focus { outline: 1px solid var(--accent); }
+  button {
+    background: var(--accent);
+    color: #1a0510;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:disabled { background: var(--accent-dim); color: #999; cursor: not-allowed; }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  #status { margin-top: 12px; font-size: 13px; color: var(--muted); min-height: 18px; }
+  #status.error { color: #ff6b6b; }
+  #videoTitle { font-size: 14px; margin: 0 0 10px; color: var(--muted); }
+  .player-shell {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    display: none;
+  }
+  .player-shell.visible { display: block; }
+  #player { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #subtitleOverlay {
+    position: absolute;
+    left: 0; right: 0; bottom: 6%;
+    text-align: center;
+    pointer-events: none;
+    padding: 0 5%;
+  }
+  #subtitleOverlay span {
+    display: inline-block;
+    background: rgba(0,0,0,0.72);
+    color: #fff;
+    font-size: clamp(16px, 2.6vw, 26px);
+    line-height: 1.4;
+    padding: 4px 14px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+  }
+  .meta-row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .badge {
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+  }
+  a.download-link { font-size: 13px; color: var(--accent); text-decoration: none; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .glossary-list { list-style: none; margin: 0 0 12px; padding: 0; max-height: 220px; overflow-y: auto; }
+  .glossary-list li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .glossary-list li .term { color: var(--text); font-weight: 500; }
+  .glossary-list li .translation { color: var(--muted); margin-left: 8px; }
+  .glossary-list li button { padding: 2px 8px; font-size: 12px; }
+  .glossary-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; }
+  .glossary-form input { background: #0d0f13; border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+  .empty-note { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>kpop_helper</h1>
+  <p class="subtitle-note">Paste a YouTube link to get Traditional Chinese subtitles, translated with fandom-aware nuance.</p>
+
+  <div class="panel">
+    <div class="row">
+      <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." />
+      <button id="loadBtn">Load</button>
+    </div>
+    <label class="checkbox-row">
+      <input type="checkbox" id="forceRefresh" /> Force re-process (ignore cache)
+    </label>
+    <div id="status"></div>
+
+    <p id="videoTitle" style="display:none"></p>
+    <div class="player-shell" id="playerShell">
+      <div id="player"></div>
+      <div id="subtitleOverlay"></div>
+    </div>
+    <div class="meta-row" id="metaRow" style="display:none">
+      <span class="badge" id="sourceBadge"></span>
+      <a class="download-link" id="downloadLink" href="#" download>Download .srt</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Glossary</h2>
+    <p class="empty-note" style="margin-top:-4px">Idol names, group names, and fandom slang translations stay consistent across videos.</p>
+    <ul class="glossary-list" id="glossaryList"></ul>
+    <div class="glossary-form">
+      <input type="text" id="gTerm" placeholder="Term (Korean/English)" />
+      <input type="text" id="gTranslation" placeholder="Traditional Chinese" />
+      <input type="text" id="gNotes" placeholder="Notes (optional)" />
+      <button id="gAddBtn" class="secondary">Add</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+
+// ---------- Process a video ----------
+const urlInput = document.getElementById("urlInput");
+const loadBtn = document.getElementById("loadBtn");
+const forceRefresh = document.getElementById("forceRefresh");
+const statusEl = document.getElementById("status");
+const videoTitleEl = document.getElementById("videoTitle");
+const playerShell = document.getElementById("playerShell");
+const metaRow = document.getElementById("metaRow");
+const sourceBadge = document.getElementById("sourceBadge");
+const downloadLink = document.getElementById("downloadLink");
+const subtitleOverlay = document.getElementById("subtitleOverlay");
+
+const STAGE_LABELS = {
+  queued: "Queued...",
+  looking_up_video: "Looking up video...",
+  fetching_captions: "Fetching captions...",
+  transcribing_audio: "No captions found - transcribing audio locally (this can take a few minutes)...",
+  translating: "Translating to Traditional Chinese...",
+  done: "Done.",
+};
+
+let cues = [];
+let pollTimer = null;
+
+function setStatus(text, isError) {
+  statusEl.textContent = text || "";
+  statusEl.classList.toggle("error", !!isError);
+}
+
+async function startProcessing() {
+  const url = urlInput.value.trim();
+  if (!url) return;
+  loadBtn.disabled = true;
+  playerShell.classList.remove("visible");
+  metaRow.style.display = "none";
+  videoTitleEl.style.display = "none";
+  setStatus("Submitting...");
+
+  try {
+    const resp = await fetch(`${API}/process`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, force_refresh: forceRefresh.checked }),
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+    const { job_id } = await resp.json();
+    pollJob(job_id);
+  } catch (err) {
+    setStatus(`Error: ${err.message}`, true);
+    loadBtn.disabled = false;
+  }
+}
+
+function pollJob(jobId) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch(`${API}/jobs/${jobId}`);
+      if (!resp.ok) throw new Error("Job not found.");
+      const job = await resp.json();
+
+      if (job.status === "running") {
+        setStatus(STAGE_LABELS[job.stage] || "Processing...");
+      } else if (job.status === "done") {
+        clearInterval(pollTimer);
+        setStatus(job.result.cached ? "Loaded from cache." : "Done.");
+        loadBtn.disabled = false;
+        showResult(job.result);
+      } else if (job.status === "error") {
+        clearInterval(pollTimer);
+        setStatus(`Error: ${job.error}`, true);
+        loadBtn.disabled = false;
+      }
+    } catch (err) {
+      clearInterval(pollTimer);
+      setStatus(`Error: ${err.message}`, true);
+      loadBtn.disabled = false;
+    }
+  }, 1500);
+}
+
+function showResult(result) {
+  cues = result.cues.map(c => ({ start: c.start, end: c.end, text: c.text_zh }));
+  videoTitleEl.textContent = result.title;
+  videoTitleEl.style.display = "block";
+  sourceBadge.textContent = `source: ${result.source_lang} (${result.source_type})`;
+  downloadLink.href = `${API}/subtitles/${result.video_id}.srt`;
+  downloadLink.setAttribute("download", `${result.video_id}.srt`);
+  metaRow.style.display = "flex";
+  playerShell.classList.add("visible");
+  loadYouTubePlayer(result.video_id);
+}
+
+// ---------- YouTube player + subtitle overlay ----------
+let ytApiReady = false;
+let player = null;
+let pendingVideoId = null;
+let syncTimer = null;
+
+function onYouTubeIframeAPIReady() {
+  ytApiReady = true;
+  if (pendingVideoId) createPlayer(pendingVideoId);
+}
+window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+
+(function loadYTScript() {
+  const tag = document.createElement("script");
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+})();
+
+function loadYouTubePlayer(videoId) {
+  if (!ytApiReady) {
+    pendingVideoId = videoId;
+    return;
+  }
+  createPlayer(videoId);
+}
+
+function createPlayer(videoId) {
+  if (player) {
+    player.loadVideoById(videoId);
+    return;
+  }
+  player = new YT.Player("player", {
+    videoId,
+    playerVars: { rel: 0, cc_load_policy: 0 },
+    events: {
+      onReady: () => {
+        if (!syncTimer) syncTimer = setInterval(syncSubtitle, 200);
+      },
+    },
+  });
+}
+
+function findCue(t) {
+  // cues are sorted by start; linear scan is fine at this size (a few hundred lines)
+  for (let i = 0; i < cues.length; i++) {
+    if (t >= cues[i].start && t < cues[i].end) return cues[i];
+  }
+  return null;
+}
+
+function syncSubtitle() {
+  if (!player || typeof player.getCurrentTime !== "function") return;
+  const t = player.getCurrentTime();
+  const cue = findCue(t);
+  subtitleOverlay.innerHTML = cue ? `<span>${escapeHtml(cue.text)}</span>` : "";
+}
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+loadBtn.addEventListener("click", startProcessing);
+urlInput.addEventListener("keydown", e => { if (e.key === "Enter") startProcessing(); });
+
+// ---------- Glossary ----------
+const glossaryList = document.getElementById("glossaryList");
+const gTerm = document.getElementById("gTerm");
+const gTranslation = document.getElementById("gTranslation");
+const gNotes = document.getElementById("gNotes");
+const gAddBtn = document.getElementById("gAddBtn");
+
+async function loadGlossary() {
+  const resp = await fetch(`${API}/glossary`);
+  const entries = await resp.json();
+  glossaryList.innerHTML = "";
+  if (entries.length === 0) {
+    glossaryList.innerHTML = '<li class="empty-note" style="border-bottom:none">No glossary entries yet.</li>';
+    return;
+  }
+  for (const e of entries) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span><span class="term">${escapeHtml(e.term)}</span><span class="translation">-&gt; ${escapeHtml(e.translation)}${e.notes ? " (" + escapeHtml(e.notes) + ")" : ""}</span></span>`;
+    const delBtn = document.createElement("button");
+    delBtn.className = "secondary";
+    delBtn.textContent = "Remove";
+    delBtn.onclick = async () => {
+      await fetch(`${API}/glossary/${encodeURIComponent(e.term)}`, { method: "DELETE" });
+      loadGlossary();
+    };
+    li.appendChild(delBtn);
+    glossaryList.appendChild(li);
+  }
+}
+
+gAddBtn.addEventListener("click", async () => {
+  const term = gTerm.value.trim();
+  const translation = gTranslation.value.trim();
+  if (!term || !translation) return;
+  await fetch(`${API}/glossary`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ term, translation, notes: gNotes.value.trim() }),
+  });
+  gTerm.value = ""; gTranslation.value = ""; gNotes.value = "";
+  loadGlossary();
+});
+
+loadGlossary();
+</script>
+</body>
+</html>
