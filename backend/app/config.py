@@ -30,6 +30,13 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_RPM = int(os.getenv("GEMINI_RPM", "5"))
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
 
+# How many subtitle lines to translate per LLM call. Free-tier Gemini also caps total
+# *requests per day* (as low as 20/day for some models) on top of the RPM limit - that cap
+# can't be worked around by pacing, only by using fewer, larger requests. 200 keeps a
+# ~500-line video to ~3 requests instead of ~13. Lower this if large batches cause the model
+# to drop/misorder lines; the paid Anthropic path has no such pressure to batch this large.
+TRANSLATE_BATCH_SIZE = int(os.getenv("TRANSLATE_BATCH_SIZE", "200"))
+
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
 
 # YouTube periodically walls off yt-dlp with a "Sign in to confirm you're not a bot" error.

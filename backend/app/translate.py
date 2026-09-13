@@ -10,8 +10,6 @@ from .vtt_utils import Cue
 
 logger = logging.getLogger("kpop_helper.translate")
 
-_BATCH_SIZE = 40
-
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 _LANG_NAMES = {"ko": "Korean", "en": "English"}
@@ -74,6 +72,27 @@ def _translate_batch_anthropic(texts: List[str], source_lang: str) -> List[str]:
     return _parse_json_objects(raw, len(texts))
 
 
+def _quota_violations(exc: Exception) -> List[dict]:
+    """Flattens the QuotaFailure violations out of a Gemini 429 error's details, if any."""
+    details = getattr(exc, "details", None)
+    error_details = None
+    if isinstance(details, dict):
+        error_details = details.get("details") or details.get("error", {}).get("details")
+    violations: List[dict] = []
+    if isinstance(error_details, list):
+        for detail in error_details:
+            for v in (detail.get("violations") if isinstance(detail, dict) else None) or []:
+                if isinstance(v, dict):
+                    violations.append(v)
+    return violations
+
+
+def _is_daily_quota_exceeded(exc: Exception) -> bool:
+    # e.g. quotaId "GenerateRequestsPerDayPerProjectPerModel-FreeTier" - unlike a per-minute
+    # limit, this can't be waited out within a single run, so retrying is pure waste.
+    return any("PerDay" in v.get("quotaId", "") for v in _quota_violations(exc))
+
+
 def _extract_retry_delay_seconds(exc: Exception) -> Optional[float]:
     """Best-effort read of how long Gemini wants us to wait before retrying a 429."""
     response = getattr(exc, "response", None)
@@ -129,7 +148,17 @@ def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
             )
             return _parse_json_objects(response.text, len(texts))
         except ClientError as exc:
-            if exc.code != 429 or attempt == config.GEMINI_MAX_RETRIES:
+            if exc.code != 429:
+                raise
+            if _is_daily_quota_exceeded(exc):
+                raise RuntimeError(
+                    f"Gemini free-tier DAILY request quota exhausted for {config.GEMINI_MODEL!r} "
+                    "- this resets roughly once every 24h, not something retrying/backoff can "
+                    "wait out. Options: wait for it to reset, switch TRANSLATION_PROVIDER=anthropic "
+                    "in backend/.env, or use a different Gemini API key/project. "
+                    f"(Google's response: {exc.message})"
+                ) from exc
+            if attempt == config.GEMINI_MAX_RETRIES:
                 raise
             delay = _extract_retry_delay_seconds(exc)
             if delay is None:
@@ -165,7 +194,8 @@ def translate_cues(
     cues: List[Cue], source_lang: str, on_batch: Optional[BatchProgressCallback] = None
 ) -> List[str]:
     results: List[str] = []
-    batches = [cues[i : i + _BATCH_SIZE] for i in range(0, len(cues), _BATCH_SIZE)]
+    batch_size = config.TRANSLATE_BATCH_SIZE
+    batches = [cues[i : i + batch_size] for i in range(0, len(cues), batch_size)]
     for batch_num, batch in enumerate(batches, start=1):
         if on_batch:
             on_batch(batch_num, len(batches))
