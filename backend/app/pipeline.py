@@ -3,7 +3,10 @@ from typing import Callable, List, Optional
 from . import cache, captions, config, transcribe, translate
 from .vtt_utils import Cue
 
-ProgressCallback = Callable[[str, Optional[str]], None]
+# stage, detail, and optional keyword metadata (video_id/title/source_lang/source_type/
+# transcript_id) - reported as soon as each becomes known, so a job that fails partway through
+# can still show which video it was working on instead of falling back to its raw URL.
+ProgressCallback = Callable[..., None]
 
 
 def _resolved_model(provider: str, llm_model: Optional[str]) -> Optional[str]:
@@ -73,7 +76,7 @@ def _resolve_transcript(
     caption_lang: Optional[str],
     force_stt: bool,
     force_refresh: bool,
-    report: Callable[[str, Optional[str]], None],
+    report: ProgressCallback,
 ) -> dict:
     """Finds-or-creates the transcript for this request, reusing the cache whenever possible.
 
@@ -100,7 +103,7 @@ def _resolve_transcript(
             cached = cache.get_transcript(video_id, "ko", "whisper")
             if cached:
                 return cached
-        report("transcribing_audio")
+        report("transcribing_audio", video_id=video_id, title=title)
         audio_path = transcribe.download_audio(url, video_id)
         cues = transcribe.transcribe(audio_path)
         if not cues:
@@ -120,7 +123,7 @@ def _resolve_transcript(
     video_id, title = info["id"], info.get("title", "")
 
     lang_preference = [caption_lang] if caption_lang else None
-    report("fetching_captions")
+    report("fetching_captions", video_id=video_id, title=title)
     cues, lang, source_type, _info = captions.fetch_captions(url, lang_preference=lang_preference)
 
     if cues:
@@ -153,7 +156,7 @@ def _resolve_transcript(
         cached = cache.get_transcript(video_id, "ko", "whisper")
         if cached:
             return cached
-    report("transcribing_audio")
+    report("transcribing_audio", video_id=video_id, title=title)
     audio_path = transcribe.download_audio(url, video_id)
     cues = transcribe.transcribe(audio_path)
     if not cues:
@@ -256,9 +259,9 @@ def process_video(
     llm_model: Optional[str] = None,
     provider: Optional[str] = None,
 ) -> dict:
-    def report(stage: str, detail: Optional[str] = None) -> None:
+    def report(stage: str, detail: Optional[str] = None, **meta) -> None:
         if on_progress:
-            on_progress(stage, detail)
+            on_progress(stage, detail, **meta)
 
     transcript = _resolve_transcript(url, caption_lang, force_stt, force_refresh, report)
     video_id = transcript["video_id"]
@@ -267,8 +270,18 @@ def process_video(
     source_type = transcript["source_type"]
     cues_ko: List[Cue] = transcript["cues"]
 
+    # Surfaced as soon as the transcript resolves, not just on success - so a job that fails
+    # partway through translation still shows the video's title/id instead of just its URL.
+    video_meta = {
+        "video_id": video_id,
+        "title": title,
+        "source_lang": source_lang,
+        "source_type": source_type,
+        "transcript_id": transcript["transcript_id"],
+    }
+
     if skip_translation:
-        report("skipping_translation")
+        report("skipping_translation", **video_meta)
         report("done")
         return {
             "video_id": video_id,
@@ -295,7 +308,7 @@ def process_video(
         )
 
     if cached_translation:
-        report("done")
+        report("done", **video_meta)
         return {
             "video_id": video_id,
             "title": title,
@@ -314,7 +327,7 @@ def process_video(
         detail = f"batch {batch_num}/{total_batches}"
         if effective_provider == "gemini" and total_batches > config.GEMINI_RPM:
             detail += f" (throttled to {config.GEMINI_RPM}/min on Gemini's free tier)"
-        report("translating", detail)
+        report("translating", detail, **video_meta)
 
     translated_texts = translate.translate_cues(
         cues_ko, source_lang, on_batch=on_batch, model=llm_model, provider=provider

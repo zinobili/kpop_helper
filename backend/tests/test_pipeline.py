@@ -180,6 +180,36 @@ def test_provider_override_result_is_cached_as_its_own_variant(monkeypatch):
     assert cache.get_translation(transcript["transcript_id"], "deepseek", "deepseek-chat") is None
 
 
+# ---------- video metadata reported before a possible failure ----------
+
+
+def test_video_meta_is_reported_before_translation_starts(monkeypatch):
+    """So a caller (jobs.py) can still show the video's title if translate_cues then fails -
+    on_batch fires before the actual translate attempt for batch 1, so meta always lands first."""
+    _stub_lookup(monkeypatch, video_id="vid1", title="Real Title")
+    monkeypatch.setattr(
+        captions, "fetch_captions", lambda url, lang_preference=None: ([_cue()], "ko", "manual", {})
+    )
+
+    def failing_translate(cues, source_lang, on_batch=None, model=None, provider=None):
+        if on_batch:
+            on_batch(1, 1)
+        raise RuntimeError("Translation response missing line numbers: [49]")
+
+    monkeypatch.setattr(translate, "translate_cues", failing_translate)
+
+    reports = []
+    with pytest.raises(RuntimeError, match="missing line numbers"):
+        pipeline.process_video(
+            "https://youtu.be/vid1",
+            on_progress=lambda stage, detail=None, **meta: reports.append((stage, meta)),
+        )
+
+    meta_by_stage = dict(reports)
+    assert meta_by_stage["translating"]["video_id"] == "vid1"
+    assert meta_by_stage["translating"]["title"] == "Real Title"
+
+
 # ---------- multi-variant reuse ----------
 
 
