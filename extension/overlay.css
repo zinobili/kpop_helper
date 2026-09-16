@@ -26,6 +26,42 @@
   cursor: not-allowed;
 }
 
+#kh-settings-btn {
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#kh-settings-panel {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: rgba(20, 20, 20, 0.92);
+  border-radius: 10px;
+  padding: 10px 12px;
+  gap: 8px;
+  flex-direction: column;
+  min-width: 160px;
+}
+
+#kh-settings-panel.kh-open {
+  display: flex;
+}
+
+#kh-settings-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #eee;
+  font-size: 11px;
+}
+
+#kh-settings-panel input[type="range"] {
+  flex: 1;
+}
+
 #kh-status {
   position: relative;
   background: rgba(0, 0, 0, 0.65);

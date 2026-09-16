@@ -29,6 +29,7 @@
   let statusEl = null;
   let loadBtn = null;
   let overlayEl = null;
+  let settingsPanel = null;
   let fontSize = DEFAULT_FONT_SIZE;
   let bgOpacity = DEFAULT_BG_OPACITY;
 
@@ -36,22 +37,8 @@
     if (overlayEl) overlayEl.style.setProperty("--kh-font-size", `${fontSize}px`);
   }
 
-  function changeFontSize(delta) {
-    fontSize = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, fontSize + delta));
-    applyFontSize();
-    chrome.storage.sync.set({ [FONT_SIZE_KEY]: fontSize });
-  }
-
   function applyBgOpacity() {
     if (overlayEl) overlayEl.style.setProperty("--kh-bg-opacity", bgOpacity);
-  }
-
-  function changeBgOpacity(delta) {
-    bgOpacity = Math.round(
-      Math.min(MAX_BG_OPACITY, Math.max(MIN_BG_OPACITY, bgOpacity + delta)) * 100
-    ) / 100;
-    applyBgOpacity();
-    chrome.storage.sync.set({ [BG_OPACITY_KEY]: bgOpacity });
   }
 
   chrome.storage.sync.get(
@@ -103,35 +90,59 @@
     loadBtn.title = "Load Traditional Chinese subtitles";
     loadBtn.onclick = onLoadClick;
 
-    const sizeDownBtn = document.createElement("button");
-    sizeDownBtn.textContent = "A-";
-    sizeDownBtn.title = "Smaller subtitles";
-    sizeDownBtn.addEventListener("click", () => changeFontSize(-2));
-
-    const sizeUpBtn = document.createElement("button");
-    sizeUpBtn.textContent = "A+";
-    sizeUpBtn.title = "Larger subtitles";
-    sizeUpBtn.addEventListener("click", () => changeFontSize(2));
-
-    const bgDownBtn = document.createElement("button");
-    bgDownBtn.textContent = "Bg-";
-    bgDownBtn.title = "More transparent subtitle background";
-    bgDownBtn.addEventListener("click", () => changeBgOpacity(-BG_OPACITY_STEP));
-
-    const bgUpBtn = document.createElement("button");
-    bgUpBtn.textContent = "Bg+";
-    bgUpBtn.title = "More opaque subtitle background";
-    bgUpBtn.addEventListener("click", () => changeBgOpacity(BG_OPACITY_STEP));
+    const settingsBtn = document.createElement("button");
+    settingsBtn.id = "kh-settings-btn";
+    settingsBtn.textContent = "⚙";
+    settingsBtn.title = "Subtitle appearance";
+    settingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      settingsPanel.classList.toggle("kh-open");
+    });
 
     statusEl = document.createElement("span");
     statusEl.id = "kh-status";
 
     controlEl.appendChild(loadBtn);
-    controlEl.appendChild(sizeDownBtn);
-    controlEl.appendChild(sizeUpBtn);
-    controlEl.appendChild(bgDownBtn);
-    controlEl.appendChild(bgUpBtn);
+    controlEl.appendChild(settingsBtn);
     controlEl.appendChild(statusEl);
+
+    settingsPanel = document.createElement("div");
+    settingsPanel.id = "kh-settings-panel";
+
+    const sizeRow = document.createElement("label");
+    sizeRow.textContent = "Size";
+    const sizeRange = document.createElement("input");
+    sizeRange.type = "range";
+    sizeRange.min = MIN_FONT_SIZE;
+    sizeRange.max = MAX_FONT_SIZE;
+    sizeRange.step = 2;
+    sizeRange.value = fontSize;
+    sizeRange.addEventListener("input", () => {
+      fontSize = Number(sizeRange.value);
+      applyFontSize();
+      chrome.storage.sync.set({ [FONT_SIZE_KEY]: fontSize });
+    });
+    sizeRow.appendChild(sizeRange);
+
+    const opacityRow = document.createElement("label");
+    opacityRow.textContent = "Bg";
+    const opacityRange = document.createElement("input");
+    opacityRange.type = "range";
+    opacityRange.min = MIN_BG_OPACITY;
+    opacityRange.max = MAX_BG_OPACITY;
+    opacityRange.step = BG_OPACITY_STEP;
+    opacityRange.value = bgOpacity;
+    opacityRange.addEventListener("input", () => {
+      bgOpacity = Number(opacityRange.value);
+      applyBgOpacity();
+      chrome.storage.sync.set({ [BG_OPACITY_KEY]: bgOpacity });
+    });
+    opacityRow.appendChild(opacityRange);
+
+    settingsPanel.appendChild(sizeRow);
+    settingsPanel.appendChild(opacityRow);
+    settingsPanel.addEventListener("click", (e) => e.stopPropagation());
+    controlEl.appendChild(settingsPanel);
 
     overlayEl = document.createElement("div");
     overlayEl.id = "kh-subtitle-overlay";
@@ -271,6 +282,7 @@
       if (overlayEl) overlayEl.remove();
       controlEl = null;
       overlayEl = null;
+      settingsPanel = null;
       return;
     }
 
@@ -282,6 +294,10 @@
       // player never showed up (e.g. non-video page matched unexpectedly) - nothing to do
     }
   }
+
+  document.addEventListener("click", () => {
+    if (settingsPanel) settingsPanel.classList.remove("kh-open");
+  });
 
   document.addEventListener("yt-navigate-finish", onNavigate);
   onNavigate();
