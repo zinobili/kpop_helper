@@ -27,6 +27,7 @@
 }
 
 #kh-status {
+  position: relative;
   background: rgba(0, 0, 0, 0.65);
   color: #eee;
   font-size: 11px;
@@ -39,6 +40,34 @@
 }
 
 #kh-status:empty { display: none; }
+
+/* Full, untruncated message shown on hover - the pill itself truncates with an ellipsis. */
+#kh-status[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.9);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  width: max-content;
+  max-width: 320px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+  z-index: 100;
+}
+
+#kh-status[data-tooltip]:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
 
 #kh-subtitle-overlay {
   position: absolute;
@@ -53,7 +82,7 @@
 
 #kh-subtitle-overlay span {
   display: inline-block;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(0, 0, 0, var(--kh-bg-opacity, 0.72));
   color: #fff;
   font-size: var(--kh-font-size, 22px);
   line-height: 1.4;

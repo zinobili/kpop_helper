@@ -14,6 +14,12 @@
   const MAX_FONT_SIZE = 44;
   const DEFAULT_FONT_SIZE = 22;
 
+  const BG_OPACITY_KEY = "khBgOpacity";
+  const MIN_BG_OPACITY = 0.1;
+  const MAX_BG_OPACITY = 1;
+  const BG_OPACITY_STEP = 0.1;
+  const DEFAULT_BG_OPACITY = 0.72;
+
   let currentVideoId = null;
   let cues = [];
   let visible = true;
@@ -24,6 +30,7 @@
   let loadBtn = null;
   let overlayEl = null;
   let fontSize = DEFAULT_FONT_SIZE;
+  let bgOpacity = DEFAULT_BG_OPACITY;
 
   function applyFontSize() {
     if (overlayEl) overlayEl.style.setProperty("--kh-font-size", `${fontSize}px`);
@@ -35,10 +42,27 @@
     chrome.storage.sync.set({ [FONT_SIZE_KEY]: fontSize });
   }
 
-  chrome.storage.sync.get({ [FONT_SIZE_KEY]: DEFAULT_FONT_SIZE }, (items) => {
-    fontSize = items[FONT_SIZE_KEY];
-    applyFontSize();
-  });
+  function applyBgOpacity() {
+    if (overlayEl) overlayEl.style.setProperty("--kh-bg-opacity", bgOpacity);
+  }
+
+  function changeBgOpacity(delta) {
+    bgOpacity = Math.round(
+      Math.min(MAX_BG_OPACITY, Math.max(MIN_BG_OPACITY, bgOpacity + delta)) * 100
+    ) / 100;
+    applyBgOpacity();
+    chrome.storage.sync.set({ [BG_OPACITY_KEY]: bgOpacity });
+  }
+
+  chrome.storage.sync.get(
+    { [FONT_SIZE_KEY]: DEFAULT_FONT_SIZE, [BG_OPACITY_KEY]: DEFAULT_BG_OPACITY },
+    (items) => {
+      fontSize = items[FONT_SIZE_KEY];
+      bgOpacity = items[BG_OPACITY_KEY];
+      applyFontSize();
+      applyBgOpacity();
+    }
+  );
 
   function apiRequest(method, path, body) {
     return new Promise((resolve, reject) => {
@@ -77,7 +101,7 @@
     loadBtn = document.createElement("button");
     loadBtn.textContent = "翻譯";
     loadBtn.title = "Load Traditional Chinese subtitles";
-    loadBtn.addEventListener("click", onLoadClick);
+    loadBtn.onclick = onLoadClick;
 
     const sizeDownBtn = document.createElement("button");
     sizeDownBtn.textContent = "A-";
@@ -89,17 +113,30 @@
     sizeUpBtn.title = "Larger subtitles";
     sizeUpBtn.addEventListener("click", () => changeFontSize(2));
 
+    const bgDownBtn = document.createElement("button");
+    bgDownBtn.textContent = "Bg-";
+    bgDownBtn.title = "More transparent subtitle background";
+    bgDownBtn.addEventListener("click", () => changeBgOpacity(-BG_OPACITY_STEP));
+
+    const bgUpBtn = document.createElement("button");
+    bgUpBtn.textContent = "Bg+";
+    bgUpBtn.title = "More opaque subtitle background";
+    bgUpBtn.addEventListener("click", () => changeBgOpacity(BG_OPACITY_STEP));
+
     statusEl = document.createElement("span");
     statusEl.id = "kh-status";
 
     controlEl.appendChild(loadBtn);
     controlEl.appendChild(sizeDownBtn);
     controlEl.appendChild(sizeUpBtn);
+    controlEl.appendChild(bgDownBtn);
+    controlEl.appendChild(bgUpBtn);
     controlEl.appendChild(statusEl);
 
     overlayEl = document.createElement("div");
     overlayEl.id = "kh-subtitle-overlay";
     applyFontSize();
+    applyBgOpacity();
 
     player.appendChild(controlEl);
     player.appendChild(overlayEl);
@@ -111,20 +148,26 @@
       loadBtn.disabled = false;
       loadBtn.onclick = onLoadClick;
     }
-    if (statusEl) statusEl.textContent = "";
+    if (statusEl) setStatus("");
     if (overlayEl) overlayEl.innerHTML = "";
   }
 
+  // The status pill truncates long text with an ellipsis, so every status update also
+  // sets data-tooltip; overlay.css shows it as a full-text tooltip on hover.
+  function setStatus(text) {
+    statusEl.textContent = text;
+    if (text) statusEl.setAttribute("data-tooltip", text);
+    else statusEl.removeAttribute("data-tooltip");
+  }
+
   function showError(message) {
-    statusEl.textContent = `Error: ${message}`;
-    statusEl.title = message; // full text on hover - the pill itself truncates with an ellipsis
+    setStatus(`Error: ${message}`);
     console.error("[kpop_helper]", message);
   }
 
   async function onLoadClick() {
     loadBtn.disabled = true;
-    statusEl.textContent = "Submitting...";
-    statusEl.title = "";
+    setStatus("Submitting...");
     try {
       const { forceStt, skipTranslation } = await new Promise((resolve) =>
         chrome.storage.sync.get({ forceStt: false, skipTranslation: false }, resolve)
@@ -148,13 +191,13 @@
         const job = await apiRequest("GET", `/jobs/${jobId}`);
         if (job.status === "running") {
           const label = STAGE_LABELS[job.stage] || "Processing...";
-          statusEl.textContent = job.detail ? `${label} (${job.detail})` : label;
+          setStatus(job.detail ? `${label} (${job.detail})` : label);
         } else if (job.status === "done") {
           clearInterval(pollTimer);
           cues = job.result.cues.map((c) => ({ start: c.start, end: c.end, text: c.text_zh }));
-          statusEl.textContent = job.result.cached ? "Loaded from cache." : "Done.";
+          setStatus(job.result.cached ? "Loaded from cache." : "Done.");
           setTimeout(() => {
-            if (statusEl) statusEl.textContent = "";
+            if (statusEl) setStatus("");
           }, 3000);
           visible = true;
           loadBtn.textContent = "隱藏字幕";
