@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from app import cache, config
@@ -65,3 +67,20 @@ def test_list_all_reports_every_row_as_translated():
     assert item["translated"] is True
     assert item["translation_provider"] is None
     assert item["translation_model"] is None
+
+
+def test_migrates_db_missing_translation_columns():
+    """A DB file created before translation_provider/translation_model existed should get
+    those columns added on first use, rather than erroring."""
+    conn = sqlite3.connect(config.DB_PATH)
+    conn.execute(
+        "CREATE TABLE subtitles (video_id TEXT PRIMARY KEY, title TEXT, source_lang TEXT, "
+        "source_type TEXT, cues_ko_json TEXT, cues_zh_json TEXT, created_at TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+    cache.put("abc123", "Title", "ko", "captions", _cues(), _cues())
+    cached = cache.get("abc123")
+    assert cached["translation_provider"] is None
+    assert cached["translation_model"] is None

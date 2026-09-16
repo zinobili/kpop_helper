@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from app import cache, pipeline
+from app import pipeline
 from app.srt_utils import cues_to_srt
 from app.vtt_utils import Cue
 

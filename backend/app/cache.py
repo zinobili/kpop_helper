@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS subtitles (
 """
 
 
+_migrated_db_paths: set = set()
+
+
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     """Adds columns introduced after a DB's first creation, for installs with an older file."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(subtitles)").fetchall()}
@@ -35,7 +38,11 @@ def _connect():
     conn = sqlite3.connect(config.DB_PATH)
     try:
         conn.execute(_SCHEMA)
-        _ensure_columns(conn)
+        # Once a given DB file's columns are confirmed present, every later connection to it
+        # (within this process) can skip the PRAGMA/ALTER check - the schema can't regress.
+        if config.DB_PATH not in _migrated_db_paths:
+            _ensure_columns(conn)
+            _migrated_db_paths.add(config.DB_PATH)
         yield conn
         conn.commit()
     finally:
