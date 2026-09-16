@@ -1,11 +1,13 @@
 from pathlib import Path
+from typing import Literal, Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cache, glossary, jobs
+from . import cache, config, glossary, jobs
 from .srt_utils import cues_to_srt
 from .vtt_utils import Cue
 
@@ -19,6 +21,10 @@ class ProcessRequest(BaseModel):
     force_refresh: bool = False
     force_stt: bool = False  # ignore existing YouTube captions, always transcribe via Whisper
     skip_translation: bool = False  # output the original-language transcript, no LLM call
+    caption_lang: Optional[Literal["ko", "en"]] = None  # None = auto (Korean preferred)
+    llm_model: Optional[str] = None  # only used when translation_provider resolves to "local"
+    translation_provider: Optional[Literal["gemini", "anthropic", "deepseek", "local"]] = None
+    # ^ None = use the .env default (TRANSLATION_PROVIDER)
 
 
 @app.get("/health")
@@ -33,6 +39,9 @@ def process(req: ProcessRequest):
         force_refresh=req.force_refresh,
         force_stt=req.force_stt,
         skip_translation=req.skip_translation,
+        caption_lang=req.caption_lang,
+        llm_model=req.llm_model,
+        translation_provider=req.translation_provider,
     )
     return {"job_id": job_id}
 
@@ -43,6 +52,34 @@ def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Unknown job_id.")
     return job
+
+
+@app.get("/local-models")
+def local_models():
+    """Models currently available on a local LLM server (Ollama, LM Studio, etc), for the
+    frontend's translation-provider/model dropdowns.
+
+    Always attempts the fetch, regardless of the .env default TRANSLATION_PROVIDER - a request
+    can pick "local" per-call via ProcessRequest.translation_provider, so the dropdown needs to
+    work even when a different provider is the default. default_provider tells the frontend
+    which option to show as "the current default".
+    """
+    models: list = []
+    try:
+        resp = httpx.get(f"{config.LOCAL_LLM_BASE_URL}/models", timeout=5)
+        resp.raise_for_status()
+        models = [m["id"] for m in resp.json().get("data", [])]
+    except Exception:
+        pass  # server not running / unreachable - frontend just shows an empty dropdown
+    return {"default_provider": config.TRANSLATION_PROVIDER, "models": models}
+
+
+@app.get("/dashboard")
+def dashboard():
+    return {
+        "processed": cache.list_all(),
+        "jobs": jobs.list_jobs(),
+    }
 
 
 @app.get("/subtitles/{video_id}.srt", response_class=PlainTextResponse)

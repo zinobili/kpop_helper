@@ -43,6 +43,15 @@
     font-size: 14px;
   }
   input[type="text"]:focus { outline: 1px solid var(--accent); }
+  select {
+    background: #0d0f13;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  select:focus { outline: 1px solid var(--accent); }
   button {
     background: var(--accent);
     color: #1a0510;
@@ -116,6 +125,23 @@
   .glossary-form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; }
   .glossary-form input { background: #0d0f13; border: 1px solid var(--border); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 13px; }
   .empty-note { color: var(--muted); font-size: 13px; }
+  .dash-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .dash-row .dash-main { min-width: 0; }
+  .dash-row .dash-title { color: var(--text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dash-row .dash-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .status-pill { font-size: 11px; padding: 2px 8px; border-radius: 20px; white-space: nowrap; border: 1px solid var(--border); }
+  .status-pill.running { color: var(--accent); border-color: var(--accent-dim); }
+  .status-pill.done { color: #6fcf97; border-color: #2f4a3a; }
+  .status-pill.error { color: #ff6b6b; border-color: #4a2a2a; }
+  .dash-table-wrap { overflow-x: auto; }
+  table.dash-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.dash-table th, table.dash-table td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  table.dash-table th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  table.dash-table td.dash-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  table.dash-table td.dash-detail { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -137,6 +163,28 @@
     <label class="checkbox-row">
       <input type="checkbox" id="skipTranslation" /> Skip translation (show original-language transcript, no LLM call)
     </label>
+    <div class="checkbox-row">
+      <label for="captionLangSelect" style="margin-right:6px">Caption source</label>
+      <select id="captionLangSelect">
+        <option value="">Auto (Korean preferred, English fallback)</option>
+        <option value="ko">Korean</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+    <div class="checkbox-row">
+      <label for="providerSelect" style="margin-right:6px">Translation provider</label>
+      <select id="providerSelect">
+        <option value="">Auto (.env default)</option>
+        <option value="gemini">Gemini</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="local">Local (Ollama / LM Studio)</option>
+      </select>
+    </div>
+    <div class="checkbox-row" id="llmModelRow" style="display:none">
+      <label for="llmModelSelect" style="margin-right:6px">Local LLM model</label>
+      <select id="llmModelSelect"></select>
+    </div>
     <div class="size-row">
       <label for="fontSizeSlider">Subtitle size</label>
       <input type="range" id="fontSizeSlider" min="14" max="44" step="1" value="22" />
@@ -152,6 +200,26 @@
     <div class="meta-row" id="metaRow" style="display:none">
       <span class="badge" id="sourceBadge"></span>
       <a class="download-link" id="downloadLink" href="#" download>Download .srt</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Dashboard</h2>
+    <p class="empty-note" style="margin-top:-4px">Jobs currently running, and every video processed so far.</p>
+    <div class="dash-table-wrap">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Approach</th>
+            <th>Used transcription</th>
+            <th>Used translation</th>
+            <th>Model used</th>
+          </tr>
+        </thead>
+        <tbody id="dashboardBody"></tbody>
+      </table>
     </div>
   </div>
 
@@ -177,6 +245,10 @@ const loadBtn = document.getElementById("loadBtn");
 const forceRefresh = document.getElementById("forceRefresh");
 const forceStt = document.getElementById("forceStt");
 const skipTranslation = document.getElementById("skipTranslation");
+const captionLangSelect = document.getElementById("captionLangSelect");
+const providerSelect = document.getElementById("providerSelect");
+const llmModelRow = document.getElementById("llmModelRow");
+const llmModelSelect = document.getElementById("llmModelSelect");
 const statusEl = document.getElementById("status");
 const videoTitleEl = document.getElementById("videoTitle");
 const playerShell = document.getElementById("playerShell");
@@ -221,6 +293,9 @@ async function startProcessing() {
         force_refresh: forceRefresh.checked,
         force_stt: forceStt.checked,
         skip_translation: skipTranslation.checked,
+        caption_lang: captionLangSelect.value || null,
+        translation_provider: providerSelect.value || null,
+        llm_model: llmModelRow.style.display !== "none" ? (llmModelSelect.value || null) : null,
       }),
     });
     if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
@@ -340,6 +415,45 @@ function escapeHtml(s) {
 loadBtn.addEventListener("click", startProcessing);
 urlInput.addEventListener("keydown", e => { if (e.key === "Enter") startProcessing(); });
 
+// ---------- Translation provider + local LLM model dropdowns ----------
+// The model dropdown is only relevant once "Local" is the *effective* provider (picked
+// explicitly, or it's the .env default and nothing was picked) - the model isn't fixed via
+// env var there, it's whatever the local server currently has loaded.
+let localModels = [];
+let defaultProvider = "";
+
+function updateLlmModelRowVisibility() {
+  const effectiveProvider = providerSelect.value || defaultProvider;
+  llmModelRow.style.display = effectiveProvider === "local" && localModels.length > 0 ? "flex" : "none";
+}
+
+async function loadLocalModels() {
+  try {
+    const resp = await fetch(`${API}/local-models`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    defaultProvider = data.default_provider || "";
+    localModels = data.models || [];
+
+    const autoOption = providerSelect.querySelector('option[value=""]');
+    if (autoOption && defaultProvider) autoOption.textContent = `Auto (.env default: ${defaultProvider})`;
+
+    llmModelSelect.innerHTML = "";
+    for (const m of localModels) {
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      llmModelSelect.appendChild(opt);
+    }
+    updateLlmModelRowVisibility();
+  } catch (_e) {
+    // local endpoint not reachable - leave the dropdown hidden
+  }
+}
+
+providerSelect.addEventListener("change", updateLlmModelRowVisibility);
+loadLocalModels();
+
 // ---------- Subtitle font size ----------
 const FONT_SIZE_KEY = "kh_font_size";
 const fontSizeSlider = document.getElementById("fontSizeSlider");
@@ -418,6 +532,93 @@ gAddBtn.addEventListener("click", async () => {
 });
 
 loadGlossary();
+
+// ---------- Dashboard ----------
+const dashboardBody = document.getElementById("dashboardBody");
+
+function formatTranscription(sourceLang, sourceType) {
+  if (!sourceType) return "-";
+  if (sourceType === "whisper") return `whisper (${sourceLang})`;
+  return `${sourceType} captions (${sourceLang})`;
+}
+
+function formatTranslation(translated) {
+  if (translated === true) return "yes";
+  if (translated === false) return "no";
+  return "-";
+}
+
+function statusPill(status) {
+  const known = status === "running" || status === "done" || status === "error";
+  const cls = known ? status : "done";
+  return `<span class="status-pill ${cls}">${escapeHtml(status)}</span>`;
+}
+
+// Normalizes a running/errored job or a fully processed (cached) video into one row shape.
+function jobToRow(j) {
+  const label = STAGE_LABELS[j.stage] || j.stage || "Processing...";
+  return {
+    name: j.title || j.url,
+    status: j.status,
+    statusDetail: j.status === "running" ? (j.detail ? `${label} (${j.detail})` : label) : (j.error || ""),
+    approach: j.translation_provider || "-",
+    used_transcription: formatTranscription(j.source_lang, j.source_type),
+    used_translation: formatTranslation(j.translated),
+    model_used: j.translation_model || "-",
+  };
+}
+
+function processedToRow(item) {
+  return {
+    name: item.title || item.video_id,
+    status: "done",
+    statusDetail: "",
+    approach: item.translation_provider || "-",
+    used_transcription: formatTranscription(item.source_lang, item.source_type),
+    used_translation: formatTranslation(item.translated),
+    model_used: item.translation_model || "-",
+  };
+}
+
+function renderDashboard(allJobs, processed) {
+  // Only unfinished/errored jobs come from the jobs list - once a job finishes it's also
+  // reflected in `processed` (from the shared cache), so pulling both would double it up.
+  const rows = [
+    ...allJobs.filter(j => j.status === "running" || j.status === "error").map(jobToRow),
+    ...processed.map(processedToRow),
+  ];
+
+  dashboardBody.innerHTML = "";
+  if (rows.length === 0) {
+    dashboardBody.innerHTML = '<tr><td colspan="6" class="empty-note">No videos processed yet.</td></tr>';
+    return;
+  }
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="dash-name" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</td>
+      <td>${statusPill(row.status)}${row.statusDetail ? `<div class="dash-detail">${escapeHtml(row.statusDetail)}</div>` : ""}</td>
+      <td>${escapeHtml(row.approach)}</td>
+      <td>${escapeHtml(row.used_transcription)}</td>
+      <td>${escapeHtml(row.used_translation)}</td>
+      <td>${escapeHtml(row.model_used)}</td>`;
+    dashboardBody.appendChild(tr);
+  }
+}
+
+async function refreshDashboard() {
+  try {
+    const resp = await fetch(`${API}/dashboard`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderDashboard(data.jobs || [], data.processed || []);
+  } catch (_e) {
+    // best-effort - just try again on the next tick
+  }
+}
+
+refreshDashboard();
+setInterval(refreshDashboard, 2000);
 </script>
 </body>
 </html>

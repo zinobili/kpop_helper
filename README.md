@@ -17,8 +17,8 @@ Later stages: live-stream support.
 1. Fetches the video's existing YouTube captions (prefers Korean, falls back to English;
    manual captions preferred over auto-generated).
 2. If a video has no captions at all, transcribes the audio locally with Whisper.
-3. Translates the Korean/English text into Traditional Chinese using an LLM (Gemini or
-   Claude, see below), applying an editable glossary (`backend/data/glossary.json`) so idol
+3. Translates the Korean/English text into Traditional Chinese using an LLM (Gemini, Claude,
+   or DeepSeek, see below), applying an editable glossary (`backend/data/glossary.json`) so idol
    names, group names, and fandom slang stay consistent across videos.
 4. Caches the result (SQLite) so re-processing the same video is instant and free.
 
@@ -39,6 +39,17 @@ Edit `backend/.env` to choose a translation provider:
 - **`TRANSLATION_PROVIDER=anthropic`** (paid, generally higher translation nuance): set
   `ANTHROPIC_API_KEY` to your own key from https://console.anthropic.com/. See
   [cost notes](#cost) below.
+- **`TRANSLATION_PROVIDER=deepseek`** (paid, very cheap, no Gemini-style daily quota): set
+  `DEEPSEEK_API_KEY` to your own key from https://platform.deepseek.com/api_keys. It's a
+  mainland Chinese model, so output may lean toward Simplified-Chinese vocabulary/idiom even
+  when asked for zh-TW — check a sample of real subtitles before relying on it.
+- **`TRANSLATION_PROVIDER=local`** (free, private, runs on your own machine): set
+  `LOCAL_LLM_BASE_URL` to your OpenAI-compatible server (Ollama's default,
+  `http://localhost:11434/v1`, is used if you don't set it; LM Studio's default is
+  `http://localhost:1234/v1`). Unlike the other providers, the model isn't fixed in `.env` —
+  the web app fetches whatever models that server currently has loaded and shows them in a
+  **Local LLM model** dropdown next to the URL field, so you can switch models per request.
+  Quality depends entirely on the model you have loaded.
 
 Only the key for the provider you selected is required.
 
@@ -158,4 +169,8 @@ See [backlog.md](backlog.md) for known open issues (e.g. YouTube's yt-dlp bot-wa
   A ~1-hour dialogue-heavy episode (~500 caption lines) costs roughly $0.10-0.15; a short MV
   with sparse lyrics costs a fraction of a cent. Charged once per video — cached re-processing
   is free.
+- **DeepSeek** (`deepseek-chat`): pay-as-you-go, roughly $0.28/1M input tokens + $0.42/1M output
+  tokens (standard pricing; DeepSeek also runs cheaper off-peak discounts) — well under a cent
+  per video, with no daily request cap to hit. Check https://api-docs.deepseek.com/quick_start/pricing
+  for current rates before relying on this number.
 - Everything else (caption fetch, Whisper fallback, caching) runs locally and is free.

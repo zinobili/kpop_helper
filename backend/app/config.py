@@ -17,10 +17,22 @@ if not _data_dir.is_absolute():
 DATA_DIR = _data_dir.resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini" or "anthropic"
+TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini", "anthropic", "deepseek", or "local"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MAX_RETRIES = int(os.getenv("DEEPSEEK_MAX_RETRIES", "5"))
+
+# For TRANSLATION_PROVIDER=local: any OpenAI-compatible chat-completions server running on
+# your machine (Ollama, LM Studio, llama.cpp server, etc). Unlike the other providers, the
+# model isn't fixed via env var - the frontend fetches whatever models that server currently
+# has loaded (GET {LOCAL_LLM_BASE_URL}/models) and lets you pick one from a dropdown per
+# request. LOCAL_LLM_MODEL is only a fallback for API callers that don't pass one explicitly.
+LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
@@ -35,7 +47,11 @@ GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
 # can't be worked around by pacing, only by using fewer, larger requests. 200 keeps a
 # ~500-line video to ~3 requests instead of ~13. Lower this if large batches cause the model
 # to drop/misorder lines; the paid Anthropic path has no such pressure to batch this large.
-TRANSLATE_BATCH_SIZE = int(os.getenv("TRANSLATE_BATCH_SIZE", "200"))
+# DeepSeek has no daily-quota pressure either, and empirically drops a line near the end of a
+# 200-line batch often enough to matter - default it smaller unless the user overrides. Local
+# models are typically weaker still, so default them small too.
+_DEFAULT_TRANSLATE_BATCH_SIZE = "50" if TRANSLATION_PROVIDER in ("deepseek", "local") else "200"
+TRANSLATE_BATCH_SIZE = int(os.getenv("TRANSLATE_BATCH_SIZE", _DEFAULT_TRANSLATE_BATCH_SIZE))
 
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
 

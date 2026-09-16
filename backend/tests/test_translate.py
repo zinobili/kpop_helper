@@ -2,10 +2,13 @@ import json
 
 import pytest
 
+from app import config
 from app.translate import (
     _extract_retry_delay_seconds,
     _is_daily_quota_exceeded,
     _parse_json_objects,
+    _translate_batch_local,
+    _translate_batch_once,
 )
 
 
@@ -95,3 +98,87 @@ def test_extracts_retry_delay_from_per_minute_error():
 
 def test_extract_retry_delay_returns_none_when_absent():
     assert _extract_retry_delay_seconds(_FakeGeminiError({})) is None
+
+
+def test_translate_batch_local_requires_a_model(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_MODEL", "")
+    with pytest.raises(RuntimeError, match="No local LLM model selected"):
+        _translate_batch_local(["hi"], "ko", None)
+
+
+def test_translate_batch_local_posts_to_configured_base_url(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_BASE_URL", "http://localhost:9999/v1")
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps([{"i": 0, "t": "你好"}])}}]}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    result = _translate_batch_local(["hi"], "ko", "llama3")
+
+    assert result == ["你好"]
+    assert captured["url"] == "http://localhost:9999/v1/chat/completions"
+    assert captured["json"]["model"] == "llama3"
+
+
+def test_translate_batch_local_falls_back_to_configured_model(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_MODEL", "default-model")
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps([{"i": 0, "t": "hi"}])}}]}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    _translate_batch_local(["hi"], "ko", None)
+
+    assert captured["json"]["model"] == "default-model"
+
+
+def test_translate_batch_once_provider_override_wins_over_config_default(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATION_PROVIDER", "deepseek")
+    monkeypatch.setattr(config, "LOCAL_LLM_MODEL", "fallback-model")
+
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps([{"i": 0, "t": "hi"}])}}]}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["url"] = url
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    result = _translate_batch_once(["hi"], "ko", provider="local")
+
+    assert result == ["hi"]
+    assert captured["url"].endswith("/chat/completions")
+
+
+def test_translate_batch_once_defaults_to_config_provider_when_not_given(monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATION_PROVIDER", "unknownprovider")
+    with pytest.raises(RuntimeError, match="Unknown translation provider 'unknownprovider'"):
+        _translate_batch_once(["hi"], "ko")

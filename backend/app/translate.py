@@ -172,26 +172,129 @@ def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
             time.sleep(delay)
 
 
-def _translate_batch_once(texts: List[str], source_lang: str) -> List[str]:
-    if config.TRANSLATION_PROVIDER == "gemini":
+_DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+
+def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
+    import httpx
+
+    if not config.DEEPSEEK_API_KEY:
+        raise RuntimeError(
+            "DEEPSEEK_API_KEY is not set. Add it to backend/.env (see .env.example). "
+            "Get a key at https://platform.deepseek.com/api_keys"
+        )
+
+    # Not using response_format={"type": "json_object"}: on this model it degenerates into
+    # echoing the format spec back as content (e.g. '{"type": "json_object"}') instead of
+    # translating. Plain-text mode + the prompt's own JSON instruction works reliably, same as
+    # the Anthropic path; _parse_json_objects still strips a markdown fence if one shows up.
+    payload = {
+        "model": config.DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": _system_prompt()},
+            {"role": "user", "content": _user_prompt(texts, source_lang)},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"}
+
+    for attempt in range(config.DEEPSEEK_MAX_RETRIES + 1):
+        try:
+            response = httpx.post(_DEEPSEEK_API_URL, json=payload, headers=headers, timeout=120)
+            response.raise_for_status()
+            break
+        except httpx.HTTPStatusError as exc:
+            # 429s (rate limit) and 5xx (transient server-side issues) are worth retrying;
+            # 4xx like a bad key or malformed request are not.
+            status = exc.response.status_code
+            if status != 429 and status < 500:
+                raise
+            if attempt == config.DEEPSEEK_MAX_RETRIES:
+                raise
+            delay = min(60.0, 5.0 * (2**attempt))  # exponential backoff: 5s, 10s, 20s, 40s...
+            logger.warning(
+                "DeepSeek request failed (status %d, attempt %d/%d); retrying in %.1fs",
+                status,
+                attempt + 1,
+                config.DEEPSEEK_MAX_RETRIES,
+                delay,
+            )
+            time.sleep(delay)
+
+    raw = response.json()["choices"][0]["message"]["content"]
+    return _parse_json_objects(raw, len(texts))
+
+
+def _translate_batch_local(texts: List[str], source_lang: str, model: Optional[str]) -> List[str]:
+    import httpx
+
+    model_name = model or config.LOCAL_LLM_MODEL
+    if not model_name:
+        raise RuntimeError(
+            "No local LLM model selected. Pick one from the model dropdown, or set "
+            "LOCAL_LLM_MODEL in backend/.env."
+        )
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": _system_prompt()},
+            {"role": "user", "content": _user_prompt(texts, source_lang)},
+        ],
+    }
+    response = httpx.post(
+        f"{config.LOCAL_LLM_BASE_URL}/chat/completions", json=payload, timeout=180
+    )
+    response.raise_for_status()
+    raw = response.json()["choices"][0]["message"]["content"]
+    return _parse_json_objects(raw, len(texts))
+
+
+def _translate_batch_once(
+    texts: List[str], source_lang: str, model: Optional[str] = None, provider: Optional[str] = None
+) -> List[str]:
+    provider = provider or config.TRANSLATION_PROVIDER
+    if provider == "gemini":
         return _translate_batch_gemini(texts, source_lang)
-    if config.TRANSLATION_PROVIDER == "anthropic":
+    if provider == "anthropic":
         return _translate_batch_anthropic(texts, source_lang)
+    if provider == "deepseek":
+        return _translate_batch_deepseek(texts, source_lang)
+    if provider == "local":
+        return _translate_batch_local(texts, source_lang, model)
     raise RuntimeError(
-        f"Unknown TRANSLATION_PROVIDER={config.TRANSLATION_PROVIDER!r}; use 'gemini' or 'anthropic'."
+        f"Unknown translation provider {provider!r}; use 'gemini', 'anthropic', 'deepseek', or 'local'."
     )
 
 
-def _translate_batch(texts: List[str], source_lang: str) -> List[str]:
-    try:
-        return _translate_batch_once(texts, source_lang)
-    except (ValueError, json.JSONDecodeError):
-        # LLMs occasionally skip a line or return malformed JSON; one retry clears most of these.
-        return _translate_batch_once(texts, source_lang)
+_BATCH_RETRY_ATTEMPTS = 3
+
+
+def _translate_batch(
+    texts: List[str], source_lang: str, model: Optional[str] = None, provider: Optional[str] = None
+) -> List[str]:
+    for attempt in range(_BATCH_RETRY_ATTEMPTS):
+        try:
+            return _translate_batch_once(texts, source_lang, model, provider)
+        except (ValueError, json.JSONDecodeError) as exc:
+            # LLMs occasionally skip a line (often near the end of a large batch) or return
+            # malformed JSON; a fresh retry usually clears it. Weaker/faster models (e.g.
+            # DeepSeek's default) do this more often than Gemini/Claude, so allow a couple of
+            # retries rather than just one.
+            if attempt == _BATCH_RETRY_ATTEMPTS - 1:
+                raise
+            logger.warning(
+                "Batch translation failed (attempt %d/%d): %s; retrying",
+                attempt + 1,
+                _BATCH_RETRY_ATTEMPTS,
+                exc,
+            )
 
 
 def translate_cues(
-    cues: List[Cue], source_lang: str, on_batch: Optional[BatchProgressCallback] = None
+    cues: List[Cue],
+    source_lang: str,
+    on_batch: Optional[BatchProgressCallback] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> List[str]:
     results: List[str] = []
     batch_size = config.TRANSLATE_BATCH_SIZE
@@ -200,5 +303,5 @@ def translate_cues(
         if on_batch:
             on_batch(batch_num, len(batches))
         texts = [c.text for c in batch]
-        results.extend(_translate_batch(texts, source_lang))
+        results.extend(_translate_batch(texts, source_lang, model, provider))
     return results

@@ -60,18 +60,23 @@ def extract_video_info(url: str) -> dict:
         return ydl.extract_info(url, download=False)
 
 
-def _pick_track_url(info: dict) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def _pick_track_url(
+    info: dict, lang_preference: Optional[List[str]] = None
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Returns (track_url, lang, source_type).
 
-    Prefers the original Korean text (manual, then auto-generated) over any language's
-    captions, since translating from the original language directly - even noisy
+    By default, prefers the original Korean text (manual, then auto-generated) over any
+    language's captions, since translating from the original language directly - even noisy
     auto-generated text - preserves more nuance than re-translating an already-translated
     English caption. Only falls back to English if no Korean track exists at all.
+
+    Pass lang_preference to override that order - e.g. ["en"] to require the English track
+    specifically, with no fallback to Korean.
     """
     manual = info.get("subtitles") or {}
     auto = info.get("automatic_captions") or {}
 
-    for lang in config.CAPTION_LANG_PREFERENCE:
+    for lang in lang_preference or config.CAPTION_LANG_PREFERENCE:
         for source_type, tracks in (("manual", manual), ("auto", auto)):
             formats = tracks.get(lang)
             if formats:
@@ -89,13 +94,16 @@ def _pick_vtt_format(formats: list) -> Optional[str]:
     return formats[0].get("url") if formats else None
 
 
-def fetch_captions(url: str) -> Tuple[Optional[List[Cue]], Optional[str], Optional[str], dict]:
+def fetch_captions(
+    url: str, lang_preference: Optional[List[str]] = None
+) -> Tuple[Optional[List[Cue]], Optional[str], Optional[str], dict]:
     """Fetch the best available caption track for a video.
 
-    Returns (cues, lang, source_type, info). cues is None if no captions exist at all.
+    Returns (cues, lang, source_type, info). cues is None if no captions exist at all
+    (or none exist in lang_preference's language, if that's passed).
     """
     info = extract_video_info(url)
-    track_url, lang, source_type = _pick_track_url(info)
+    track_url, lang, source_type = _pick_track_url(info, lang_preference)
     if not track_url:
         return None, None, None, info
 
