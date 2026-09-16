@@ -107,6 +107,8 @@ def list_jobs() -> list:
                 "translated": result.get("translated") if result else None,
                 "translation_provider": result.get("translation_provider") if result else None,
                 "translation_model": result.get("translation_model") if result else None,
+                "transcript_id": result.get("transcript_id") if result else None,
+                "variant_id": result.get("variant_id") if result else None,
             }
         )
     return summaries

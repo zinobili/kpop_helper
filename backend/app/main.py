@@ -7,9 +7,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cache, config, glossary, jobs
+from . import cache, config, glossary, jobs, pipeline
 from .srt_utils import cues_to_srt
-from .vtt_utils import Cue
 
 app = FastAPI(title="kpop_helper backend")
 
@@ -77,18 +76,62 @@ def local_models():
 @app.get("/dashboard")
 def dashboard():
     return {
-        "processed": cache.list_all(),
+        "processed": cache.list_variants(),
         "jobs": jobs.list_jobs(),
     }
 
 
+@app.get("/videos/{video_id}/variants")
+def video_variants(video_id: str):
+    """Every cached translation for one video, for a variant picker - so a client can offer
+    an already-translated version instead of re-submitting to /process."""
+    return cache.list_variants(video_id)
+
+
+@app.get("/translate-preview")
+def translate_preview(
+    url: str,
+    caption_lang: Optional[Literal["ko", "en"]] = None,
+    force_stt: bool = False,
+    translation_provider: Optional[Literal["gemini", "anthropic", "deepseek", "local"]] = None,
+    llm_model: Optional[str] = None,
+):
+    """What a /process call with these settings would do, without doing any of the expensive
+    work: which transcript it would resolve to, whether a translation already matches these
+    exact settings, and what other cached translations exist for that same transcript. Lets a
+    client prompt "use this existing translation?" before kicking off a real job."""
+    try:
+        return pipeline.preview_translation_options(
+            url, caption_lang=caption_lang, force_stt=force_stt,
+            provider=translation_provider, llm_model=llm_model,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/variant/{variant_id}")
+def get_variant(variant_id: str):
+    result = pipeline.get_variant_result(variant_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Unknown variant_id.")
+    return result
+
+
+@app.get("/subtitles/variant/{variant_id}.srt", response_class=PlainTextResponse)
+def get_variant_srt(variant_id: str):
+    variant = cache.get_variant(variant_id)
+    if not variant:
+        raise HTTPException(status_code=404, detail="Unknown variant_id.")
+    return cues_to_srt(variant["cues"])
+
+
 @app.get("/subtitles/{video_id}.srt", response_class=PlainTextResponse)
 def get_srt(video_id: str):
-    cached = cache.get(video_id)
-    if not cached:
+    variants = cache.list_variants(video_id)
+    if not variants:
         raise HTTPException(status_code=404, detail="No cached subtitles for this video_id yet.")
-    cues = [Cue(start=c.start, end=c.end, text=c.text) for c in cached["cues_zh"]]
-    return cues_to_srt(cues)
+    variant = cache.get_variant(variants[0]["variant_id"])  # most recently created
+    return cues_to_srt(variant["cues"])
 
 
 @app.get("/glossary")

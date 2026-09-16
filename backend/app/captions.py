@@ -60,7 +60,7 @@ def extract_video_info(url: str) -> dict:
         return ydl.extract_info(url, download=False)
 
 
-def _pick_track_url(
+def pick_caption_track(
     info: dict, lang_preference: Optional[List[str]] = None
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Returns (track_url, lang, source_type).
@@ -103,7 +103,7 @@ def fetch_captions(
     (or none exist in lang_preference's language, if that's passed).
     """
     info = extract_video_info(url)
-    track_url, lang, source_type = _pick_track_url(info, lang_preference)
+    track_url, lang, source_type = pick_caption_track(info, lang_preference)
     if not track_url:
         return None, None, None, info
 

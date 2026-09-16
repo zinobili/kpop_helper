@@ -17,6 +17,17 @@ def client():
     return TestClient(main.app)
 
 
+def _cues():
+    return [Cue(start=0.0, end=1.0, text="hi")]
+
+
+def _seed_variant(video_id="abc123", title="Title", source_lang="ko", source_type="manual",
+                   provider="gemini", model="gemini-3.6-flash"):
+    transcript_id = cache.put_transcript(video_id, title, source_lang, source_type, _cues())
+    variant_id = cache.put_translation(transcript_id, provider, model, _cues())
+    return transcript_id, variant_id
+
+
 def test_process_passes_new_fields_to_create_job(client, monkeypatch):
     captured = {}
 
@@ -89,13 +100,21 @@ def test_dashboard_empty(client):
 
 
 def test_dashboard_lists_processed_videos(client):
-    cues = [Cue(start=0.0, end=1.0, text="hi")]
-    cache.put("abc123", "Title", "ko", "captions", cues, cues)
+    _seed_variant()
 
     data = client.get("/dashboard").json()
     assert len(data["processed"]) == 1
     assert data["processed"][0]["video_id"] == "abc123"
     assert data["processed"][0]["title"] == "Title"
+
+
+def test_dashboard_lists_one_row_per_variant(client):
+    _seed_variant(provider="gemini")
+    transcript_id = cache.get_transcript("abc123", "ko", "manual")["transcript_id"]
+    cache.put_translation(transcript_id, "anthropic", "claude-sonnet-5", _cues())
+
+    data = client.get("/dashboard").json()
+    assert len(data["processed"]) == 2
 
 
 def test_dashboard_lists_running_job_stage(client, monkeypatch):
@@ -126,3 +145,99 @@ def test_dashboard_lists_running_job_stage(client, monkeypatch):
 
     assert job_summary is not None
     assert job_summary["url"] == "https://youtu.be/v1"
+
+
+def test_video_variants_lists_only_that_video(client):
+    _seed_variant(video_id="abc123")
+    _seed_variant(video_id="xyz789")
+
+    resp = client.get("/videos/abc123/variants")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["video_id"] == "abc123"
+
+
+def test_video_variants_empty_for_unknown_video(client):
+    resp = client.get("/videos/unknown/variants")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_get_variant_returns_cues(client):
+    _transcript_id, variant_id = _seed_variant()
+    resp = client.get(f"/variant/{variant_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["video_id"] == "abc123"
+    assert data["cues"][0]["text_zh"] == "hi"
+
+
+def test_get_variant_404_for_unknown_id(client):
+    resp = client.get("/variant/nope")
+    assert resp.status_code == 404
+
+
+def test_variant_srt_download(client):
+    _transcript_id, variant_id = _seed_variant()
+    resp = client.get(f"/subtitles/variant/{variant_id}.srt")
+    assert resp.status_code == 200
+    assert "hi" in resp.text
+
+
+def test_variant_srt_404_for_unknown_id(client):
+    resp = client.get("/subtitles/variant/nope.srt")
+    assert resp.status_code == 404
+
+
+def test_legacy_video_srt_resolves_most_recent_variant(client):
+    _seed_variant()
+    resp = client.get("/subtitles/abc123.srt")
+    assert resp.status_code == 200
+    assert "hi" in resp.text
+
+
+def test_legacy_video_srt_404_when_nothing_cached(client):
+    resp = client.get("/subtitles/nope.srt")
+    assert resp.status_code == 404
+
+
+def test_translate_preview_no_cache(client, monkeypatch):
+    monkeypatch.setattr(
+        main.pipeline, "resolve_transcript_identity",
+        lambda url, caption_lang=None, force_stt=False: (
+            {"video_id": "abc123", "title": "Title", "source_lang": "ko", "source_type": "manual"}
+        ),
+    )
+    resp = client.get("/translate-preview", params={"url": "https://youtu.be/abc123"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["exact_match"] is False
+    assert data["alternates"] == []
+
+
+def test_translate_preview_reports_alternates(client, monkeypatch):
+    monkeypatch.setattr(config, "TRANSLATION_PROVIDER", "gemini")
+    monkeypatch.setattr(
+        main.pipeline, "resolve_transcript_identity",
+        lambda url, caption_lang=None, force_stt=False: (
+            {"video_id": "abc123", "title": "Title", "source_lang": "ko", "source_type": "manual"}
+        ),
+    )
+    transcript_id = cache.put_transcript("abc123", "Title", "ko", "manual", _cues())
+    cache.put_translation(transcript_id, "anthropic", "claude-sonnet-5", _cues())
+
+    resp = client.get("/translate-preview", params={"url": "https://youtu.be/abc123"})
+    data = resp.json()
+    assert data["exact_match"] is False
+    assert len(data["alternates"]) == 1
+    assert data["alternates"][0]["translation_provider"] == "anthropic"
+
+
+def test_translate_preview_400_on_error(client, monkeypatch):
+    def boom(url, caption_lang=None, force_stt=False):
+        raise RuntimeError("yt-dlp exploded")
+
+    monkeypatch.setattr(main.pipeline, "resolve_transcript_identity", boom)
+    resp = client.get("/translate-preview", params={"url": "https://youtu.be/abc123"})
+    assert resp.status_code == 400

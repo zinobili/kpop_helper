@@ -28,6 +28,7 @@
   let controlEl = null;
   let statusEl = null;
   let loadBtn = null;
+  let captionLangSelect = null;
   let overlayEl = null;
   let settingsPanel = null;
   let fontSize = DEFAULT_FONT_SIZE;
@@ -90,6 +91,15 @@
     loadBtn.title = "Load Traditional Chinese subtitles";
     loadBtn.onclick = onLoadClick;
 
+    captionLangSelect = document.createElement("select");
+    captionLangSelect.id = "kh-caption-lang";
+    captionLangSelect.title = "Caption source";
+    captionLangSelect.innerHTML = `
+      <option value="">Auto</option>
+      <option value="ko">KO</option>
+      <option value="en">EN</option>
+    `;
+
     const settingsBtn = document.createElement("button");
     settingsBtn.id = "kh-settings-btn";
     settingsBtn.textContent = "⚙";
@@ -103,6 +113,7 @@
     statusEl.id = "kh-status";
 
     controlEl.appendChild(loadBtn);
+    controlEl.appendChild(captionLangSelect);
     controlEl.appendChild(settingsBtn);
     controlEl.appendChild(statusEl);
 
@@ -159,6 +170,7 @@
       loadBtn.disabled = false;
       loadBtn.onclick = onLoadClick;
     }
+    if (captionLangSelect) captionLangSelect.value = "";
     if (statusEl) setStatus("");
     if (overlayEl) overlayEl.innerHTML = "";
   }
@@ -178,21 +190,82 @@
 
   async function onLoadClick() {
     loadBtn.disabled = true;
-    setStatus("Submitting...");
+    setStatus("Checking for existing translations...");
     try {
       const { forceStt, skipTranslation } = await new Promise((resolve) =>
         chrome.storage.sync.get({ forceStt: false, skipTranslation: false }, resolve)
       );
+      const captionLang = captionLangSelect ? captionLangSelect.value : "";
+
+      if (!skipTranslation) {
+        const usedExisting = await offerExistingVariant(captionLang, forceStt);
+        if (usedExisting) {
+          loadBtn.disabled = false;
+          return;
+        }
+      }
+
+      setStatus("Submitting...");
       const { job_id } = await apiRequest("POST", "/process", {
         url: location.href,
         force_stt: forceStt,
         skip_translation: skipTranslation,
+        caption_lang: captionLang || null,
       });
       pollJob(job_id);
     } catch (err) {
       showError(err.message);
       loadBtn.disabled = false;
     }
+  }
+
+  // Checks whether this video already has a cached translation for a *different* combination
+  // of settings than the one about to be requested (e.g. a different LLM/model, since the
+  // extension never offers that choice itself), and if so, asks before reusing it. Returns
+  // true if an existing variant was loaded (caller should stop, not submit a new job).
+  async function offerExistingVariant(captionLang, forceStt) {
+    const params = new URLSearchParams({ url: location.href });
+    if (captionLang) params.set("caption_lang", captionLang);
+    if (forceStt) params.set("force_stt", "true");
+
+    let preview;
+    try {
+      preview = await apiRequest("GET", `/translate-preview?${params.toString()}`);
+    } catch (_err) {
+      return false; // preview failed - just fall through to a normal /process request
+    }
+
+    if (preview.exact_match || !preview.alternates || preview.alternates.length === 0) {
+      return false;
+    }
+
+    const alt = preview.alternates[0];
+    const langLabel = preview.source_lang === "ko" ? "Korean" : "English";
+    const when = alt.created_at ? new Date(alt.created_at).toLocaleString() : "earlier";
+    const modelLabel = alt.translation_model ? `${alt.translation_provider}/${alt.translation_model}` : alt.translation_provider;
+    const useExisting = confirm(
+      `This video already has a ${langLabel} translation from ${modelLabel}, made ${when}.\n\n` +
+      `Use it? (Cancel to translate a new version instead)`
+    );
+    if (!useExisting) return false;
+
+    setStatus("Loading cached translation...");
+    const result = await apiRequest("GET", `/variant/${alt.variant_id}`);
+    applyResult(result);
+    return true;
+  }
+
+  function applyResult(result) {
+    cues = result.cues.map((c) => ({ start: c.start, end: c.end, text: c.text_zh }));
+    setStatus(result.cached ? "Loaded from cache." : "Done.");
+    setTimeout(() => {
+      if (statusEl) setStatus("");
+    }, 3000);
+    visible = true;
+    loadBtn.textContent = "隱藏字幕";
+    loadBtn.disabled = false;
+    loadBtn.onclick = onToggleClick;
+    startSync();
   }
 
   function pollJob(jobId) {
@@ -205,16 +278,7 @@
           setStatus(job.detail ? `${label} (${job.detail})` : label);
         } else if (job.status === "done") {
           clearInterval(pollTimer);
-          cues = job.result.cues.map((c) => ({ start: c.start, end: c.end, text: c.text_zh }));
-          setStatus(job.result.cached ? "Loaded from cache." : "Done.");
-          setTimeout(() => {
-            if (statusEl) setStatus("");
-          }, 3000);
-          visible = true;
-          loadBtn.textContent = "隱藏字幕";
-          loadBtn.disabled = false;
-          loadBtn.onclick = onToggleClick;
-          startSync();
+          applyResult(job.result);
         } else if (job.status === "error") {
           clearInterval(pollTimer);
           showError(job.error);
@@ -283,6 +347,7 @@
       controlEl = null;
       overlayEl = null;
       settingsPanel = null;
+      captionLangSelect = null;
       return;
     }
 

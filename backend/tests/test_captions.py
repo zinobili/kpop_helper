@@ -1,6 +1,6 @@
 import pytest
 
-from app.captions import _pick_track_url, extract_video_id_from_url
+from app.captions import pick_caption_track, extract_video_id_from_url
 
 VALID_ID = "yLGXM5O8v5Q"
 
@@ -40,27 +40,27 @@ def _info(manual=None, auto=None):
     return {"subtitles": manual or {}, "automatic_captions": auto or {}}
 
 
-def test_pick_track_url_defaults_to_korean_over_english():
+def test_pick_caption_track_defaults_to_korean_over_english():
     info = _info(manual={
         "ko": [{"ext": "vtt", "url": "ko.vtt"}],
         "en": [{"ext": "vtt", "url": "en.vtt"}],
     })
-    assert _pick_track_url(info) == ("ko.vtt", "ko", "manual")
+    assert pick_caption_track(info) == ("ko.vtt", "ko", "manual")
 
 
-def test_pick_track_url_falls_back_to_english_when_no_korean():
+def test_pick_caption_track_falls_back_to_english_when_no_korean():
     info = _info(manual={"en": [{"ext": "vtt", "url": "en.vtt"}]})
-    assert _pick_track_url(info) == ("en.vtt", "en", "manual")
+    assert pick_caption_track(info) == ("en.vtt", "en", "manual")
 
 
-def test_pick_track_url_lang_preference_overrides_default_order():
+def test_pick_caption_track_lang_preference_overrides_default_order():
     info = _info(manual={
         "ko": [{"ext": "vtt", "url": "ko.vtt"}],
         "en": [{"ext": "vtt", "url": "en.vtt"}],
     })
-    assert _pick_track_url(info, lang_preference=["en"]) == ("en.vtt", "en", "manual")
+    assert pick_caption_track(info, lang_preference=["en"]) == ("en.vtt", "en", "manual")
 
 
-def test_pick_track_url_lang_preference_has_no_fallback_when_missing():
+def test_pick_caption_track_lang_preference_has_no_fallback_when_missing():
     info = _info(manual={"ko": [{"ext": "vtt", "url": "ko.vtt"}]})
-    assert _pick_track_url(info, lang_preference=["en"]) == (None, None, None)
+    assert pick_caption_track(info, lang_preference=["en"]) == (None, None, None)

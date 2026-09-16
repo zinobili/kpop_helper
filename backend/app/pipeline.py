@@ -26,6 +26,226 @@ def _cues_to_dicts(cues_ko: List[Cue], cues_zh: List[str]) -> List[dict]:
     ]
 
 
+def _candidate_identities(caption_lang: Optional[str], force_stt: bool):
+    """Every (source_lang, source_type) a request could resolve to, in preference order -
+    used to probe the cache without ever touching yt-dlp/YouTube."""
+    if force_stt:
+        return [("ko", "whisper")]
+    langs = [caption_lang] if caption_lang else config.CAPTION_LANG_PREFERENCE
+    candidates = [(lang, source_type) for lang in langs for source_type in ("manual", "auto")]
+    if not caption_lang or caption_lang == "ko":
+        candidates.append(("ko", "whisper"))
+    return candidates
+
+
+def resolve_transcript_identity(
+    url: str, caption_lang: Optional[str] = None, force_stt: bool = False
+) -> dict:
+    """Figures out which (video_id, source_lang, source_type) a request would resolve to,
+    without downloading a caption track's body or running Whisper - just one yt-dlp metadata
+    call. Used by the real pipeline's cache short-circuit and by /translate-preview.
+
+    source_lang/source_type come back None only when caption_lang was explicitly requested and
+    isn't available for this video (mirrors process_video's own error condition).
+    """
+    info = captions.extract_video_info(url)
+    video_id = info["id"]
+    title = info.get("title", "")
+
+    if force_stt:
+        return {"video_id": video_id, "title": title, "source_lang": "ko", "source_type": "whisper"}
+
+    lang_preference = [caption_lang] if caption_lang else None
+    _track_url, lang, source_type = captions.pick_caption_track(info, lang_preference)
+    if lang and source_type:
+        return {"video_id": video_id, "title": title, "source_lang": lang, "source_type": source_type}
+
+    if caption_lang and caption_lang != "ko":
+        return {"video_id": video_id, "title": title, "source_lang": None, "source_type": None}
+
+    # No captions at all (or none in the requested/preferred language) - Whisper is the
+    # fallback for everything except an explicit non-Korean request, handled above.
+    return {"video_id": video_id, "title": title, "source_lang": "ko", "source_type": "whisper"}
+
+
+def _resolve_transcript(
+    url: str,
+    caption_lang: Optional[str],
+    force_stt: bool,
+    force_refresh: bool,
+    report: Callable[[str, Optional[str]], None],
+) -> dict:
+    """Finds-or-creates the transcript for this request, reusing the cache whenever possible.
+
+    Mirrors process_video's old caption/whisper resolution order exactly, just checking the
+    cache (keyed by video_id + source_lang + source_type) before doing the expensive fetch/
+    transcribe step, and writing the result back under that same key afterward.
+    """
+    if not force_refresh:
+        # A network-free video-id parse first, so a cache hit never has to touch
+        # yt-dlp/YouTube at all - cached videos keep working even if YouTube is currently
+        # bot-walling yt-dlp.
+        quick_id = captions.extract_video_id_from_url(url)
+        if quick_id:
+            for lang, source_type in _candidate_identities(caption_lang, force_stt):
+                cached = cache.get_transcript(quick_id, lang, source_type)
+                if cached:
+                    return cached
+
+    if force_stt:
+        report("looking_up_video")
+        info = captions.extract_video_info(url)
+        video_id, title = info["id"], info.get("title", "")
+        if not force_refresh:
+            cached = cache.get_transcript(video_id, "ko", "whisper")
+            if cached:
+                return cached
+        report("transcribing_audio")
+        audio_path = transcribe.download_audio(url, video_id)
+        cues = transcribe.transcribe(audio_path)
+        if not cues:
+            raise RuntimeError("Could not obtain any captions or transcription for this video.")
+        transcript_id = cache.put_transcript(video_id, title, "ko", "whisper", cues)
+        return {
+            "transcript_id": transcript_id,
+            "video_id": video_id,
+            "title": title,
+            "source_lang": "ko",
+            "source_type": "whisper",
+            "cues": cues,
+        }
+
+    report("looking_up_video")
+    info = captions.extract_video_info(url)
+    video_id, title = info["id"], info.get("title", "")
+
+    lang_preference = [caption_lang] if caption_lang else None
+    report("fetching_captions")
+    cues, lang, source_type, _info = captions.fetch_captions(url, lang_preference=lang_preference)
+
+    if cues:
+        if not force_refresh:
+            cached = cache.get_transcript(video_id, lang, source_type)
+            if cached:
+                return cached
+        transcript_id = cache.put_transcript(video_id, title, lang, source_type, cues)
+        return {
+            "transcript_id": transcript_id,
+            "video_id": video_id,
+            "title": title,
+            "source_lang": lang,
+            "source_type": source_type,
+            "cues": cues,
+        }
+
+    # Whisper only ever transcribes the original Korean audio (see transcribe.transcribe), so
+    # it's a sensible fallback when no caption preference was given, or "ko" was requested but
+    # isn't available - but never when the user explicitly asked for a different language's
+    # captions, since silently swapping in a Korean transcript would contradict that choice.
+    if caption_lang and caption_lang != "ko":
+        raise RuntimeError(
+            f"No {caption_lang!r} captions found for this video. Local transcription can only "
+            "produce a Korean transcript, so it can't stand in for this choice - try a "
+            "different caption source, or leave it on auto."
+        )
+
+    if not force_refresh:
+        cached = cache.get_transcript(video_id, "ko", "whisper")
+        if cached:
+            return cached
+    report("transcribing_audio")
+    audio_path = transcribe.download_audio(url, video_id)
+    cues = transcribe.transcribe(audio_path)
+    if not cues:
+        raise RuntimeError("Could not obtain any captions or transcription for this video.")
+    transcript_id = cache.put_transcript(video_id, title, "ko", "whisper", cues)
+    return {
+        "transcript_id": transcript_id,
+        "video_id": video_id,
+        "title": title,
+        "source_lang": "ko",
+        "source_type": "whisper",
+        "cues": cues,
+    }
+
+
+def preview_translation_options(
+    url: str,
+    caption_lang: Optional[str] = None,
+    force_stt: bool = False,
+    provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> dict:
+    """What a /process call with these settings would do, without doing any of the expensive
+    work: which transcript it would use, whether a translation already matches these exact
+    settings, and what other cached translations exist for that same transcript.
+    """
+    identity = resolve_transcript_identity(url, caption_lang=caption_lang, force_stt=force_stt)
+    video_id, title = identity["video_id"], identity["title"]
+    source_lang, source_type = identity["source_lang"], identity["source_type"]
+
+    effective_provider = provider or config.TRANSLATION_PROVIDER
+    resolved_model = _resolved_model(effective_provider, llm_model)
+
+    if not source_lang or not source_type:
+        return {
+            "video_id": video_id,
+            "title": title,
+            "source_lang": None,
+            "source_type": None,
+            "exact_match": False,
+            "alternates": [],
+        }
+
+    transcript = cache.get_transcript(video_id, source_lang, source_type)
+    if not transcript:
+        return {
+            "video_id": video_id,
+            "title": title,
+            "source_lang": source_lang,
+            "source_type": source_type,
+            "exact_match": False,
+            "alternates": [],
+        }
+
+    variants = cache.list_translations_for_transcript(transcript["transcript_id"])
+
+    def _is_requested(v: dict) -> bool:
+        return v["translation_provider"] == effective_provider and v["translation_model"] == resolved_model
+
+    return {
+        "video_id": video_id,
+        "title": title,
+        "source_lang": source_lang,
+        "source_type": source_type,
+        "exact_match": any(_is_requested(v) for v in variants),
+        "alternates": [v for v in variants if not _is_requested(v)],
+    }
+
+
+def get_variant_result(variant_id: str) -> Optional[dict]:
+    """A cached translation's full cues, in the same shape a finished job's `result` has -
+    lets a client load an already-cached variant directly, no job/polling needed."""
+    variant = cache.get_variant(variant_id)
+    if not variant:
+        return None
+    transcript = cache.get_transcript(variant["video_id"], variant["source_lang"], variant["source_type"])
+    cues_ko = transcript["cues"] if transcript else []
+    return {
+        "video_id": variant["video_id"],
+        "title": variant["title"],
+        "source_lang": variant["source_lang"],
+        "source_type": variant["source_type"],
+        "cached": True,
+        "translated": True,
+        "translation_provider": variant["translation_provider"],
+        "translation_model": variant["translation_model"],
+        "transcript_id": variant["transcript_id"],
+        "variant_id": variant["variant_id"],
+        "cues": _cues_to_dicts(cues_ko, [c.text for c in variant["cues"]]),
+    }
+
+
 def process_video(
     url: str,
     force_refresh: bool = False,
@@ -40,125 +260,71 @@ def process_video(
         if on_progress:
             on_progress(stage, detail)
 
-    # A per-request provider override falls back to the .env default when not given.
-    effective_provider = provider or config.TRANSLATION_PROVIDER
+    transcript = _resolve_transcript(url, caption_lang, force_stt, force_refresh, report)
+    video_id = transcript["video_id"]
+    title = transcript["title"]
+    source_lang = transcript["source_lang"]
+    source_type = transcript["source_type"]
+    cues_ko: List[Cue] = transcript["cues"]
 
-    # force_stt/skip_translation/caption_lang/provider are explicit, deliberate overrides
-    # (debug an STT-only source, avoid the LLM entirely, pick a specific caption track, or try
-    # a different provider) - they always run fresh and never read or write the shared cache,
-    # so they can't shadow a normal request's real translated result under the same video_id,
-    # and a normal request later can't accidentally surface a result built from one of these.
-    use_cache = (
-        not force_refresh
-        and not force_stt
-        and not skip_translation
-        and not caption_lang
-        and not provider
-    )
-
-    # Try a network-free video ID parse first, so a cache hit never has to touch
-    # yt-dlp/YouTube at all - this also means cached videos keep working even if YouTube is
-    # currently throwing up a bot-detection wall against yt-dlp.
-    if use_cache:
-        quick_id = captions.extract_video_id_from_url(url)
-        if quick_id:
-            cached = cache.get(quick_id)
-            if cached:
-                report("done")
-                return {
-                    "video_id": quick_id,
-                    "title": cached["title"],
-                    "source_lang": cached["source_lang"],
-                    "source_type": cached["source_type"],
-                    "cached": True,
-                    "translated": True,
-                    "translation_provider": cached["translation_provider"],
-                    "translation_model": cached["translation_model"],
-                    "cues": _cues_to_dicts(cached["cues_ko"], [c.text for c in cached["cues_zh"]]),
-                }
-
-    report("looking_up_video")
-    info = captions.extract_video_info(url)
-    video_id = info["id"]
-    title = info.get("title", "")
-
-    if use_cache:
-        cached = cache.get(video_id)
-        if cached:
-            report("done")
-            return {
-                "video_id": video_id,
-                "title": cached["title"],
-                "source_lang": cached["source_lang"],
-                "source_type": cached["source_type"],
-                "cached": True,
-                "translated": True,
-                "translation_provider": cached["translation_provider"],
-                "translation_model": cached["translation_model"],
-                "cues": _cues_to_dicts(cached["cues_ko"], [c.text for c in cached["cues_zh"]]),
-            }
-
-    cues_ko: List[Cue] = []
-    source_lang = source_type = None
-
-    if not force_stt:
-        report("fetching_captions")
-        lang_preference = [caption_lang] if caption_lang else None
-        cues_ko, source_lang, source_type, _info = captions.fetch_captions(
-            url, lang_preference=lang_preference
-        )
-
-    # Whisper only ever transcribes the original Korean audio (see transcribe.transcribe), so
-    # it's a sensible fallback when no caption preference was given, or "ko" was requested but
-    # isn't available - but never when the user explicitly asked for a different language's
-    # captions, since silently swapping in a Korean transcript would contradict that choice.
-    if not cues_ko and caption_lang and caption_lang != "ko":
-        raise RuntimeError(
-            f"No {caption_lang!r} captions found for this video. Local transcription can only "
-            "produce a Korean transcript, so it can't stand in for this choice - try a "
-            "different caption source, or leave it on auto."
-        )
-
-    if not cues_ko:
-        report("transcribing_audio")
-        audio_path = transcribe.download_audio(url, video_id)
-        cues_ko = transcribe.transcribe(audio_path)
-        source_lang = "ko"
-        source_type = "whisper"
-
-    if not cues_ko:
-        raise RuntimeError("Could not obtain any captions or transcription for this video.")
-
-    translation_provider = translation_model = None
     if skip_translation:
         report("skipping_translation")
-        translated_texts = [c.text for c in cues_ko]
-    else:
-        def on_batch(batch_num: int, total_batches: int) -> None:
-            detail = f"batch {batch_num}/{total_batches}"
-            if effective_provider == "gemini" and total_batches > config.GEMINI_RPM:
-                detail += f" (throttled to {config.GEMINI_RPM}/min on Gemini's free tier)"
-            report("translating", detail)
+        report("done")
+        return {
+            "video_id": video_id,
+            "title": title,
+            "source_lang": source_lang,
+            "source_type": source_type,
+            "cached": False,
+            "translated": False,
+            "translation_provider": None,
+            "translation_model": None,
+            "transcript_id": transcript["transcript_id"],
+            "variant_id": None,
+            "cues": _cues_to_dicts(cues_ko, [c.text for c in cues_ko]),
+        }
 
-        translated_texts = translate.translate_cues(
-            cues_ko, source_lang, on_batch=on_batch, model=llm_model, provider=provider
+    # A per-request provider override falls back to the .env default when not given.
+    effective_provider = provider or config.TRANSLATION_PROVIDER
+    resolved_model = _resolved_model(effective_provider, llm_model)
+
+    cached_translation = None
+    if not force_refresh:
+        cached_translation = cache.get_translation(
+            transcript["transcript_id"], effective_provider, resolved_model
         )
-        translation_provider = effective_provider
-        translation_model = _resolved_model(effective_provider, llm_model)
 
-    cues_zh = [Cue(start=c.start, end=c.end, text=t) for c, t in zip(cues_ko, translated_texts)]
+    if cached_translation:
+        report("done")
+        return {
+            "video_id": video_id,
+            "title": title,
+            "source_lang": source_lang,
+            "source_type": source_type,
+            "cached": True,
+            "translated": True,
+            "translation_provider": effective_provider,
+            "translation_model": resolved_model,
+            "transcript_id": transcript["transcript_id"],
+            "variant_id": cached_translation["variant_id"],
+            "cues": _cues_to_dicts(cues_ko, [c.text for c in cached_translation["cues"]]),
+        }
 
-    if not skip_translation and not caption_lang and not provider:
-        cache.put(
-            video_id,
-            title,
-            source_lang,
-            source_type,
-            cues_ko,
-            cues_zh,
-            translation_provider=translation_provider,
-            translation_model=translation_model,
-        )
+    def on_batch(batch_num: int, total_batches: int) -> None:
+        detail = f"batch {batch_num}/{total_batches}"
+        if effective_provider == "gemini" and total_batches > config.GEMINI_RPM:
+            detail += f" (throttled to {config.GEMINI_RPM}/min on Gemini's free tier)"
+        report("translating", detail)
+
+    translated_texts = translate.translate_cues(
+        cues_ko, source_lang, on_batch=on_batch, model=llm_model, provider=provider
+    )
+    variant_id = cache.put_translation(
+        transcript["transcript_id"],
+        effective_provider,
+        resolved_model,
+        [Cue(start=c.start, end=c.end, text=t) for c, t in zip(cues_ko, translated_texts)],
+    )
 
     report("done")
     return {
@@ -167,8 +333,10 @@ def process_video(
         "source_lang": source_lang,
         "source_type": source_type,
         "cached": False,
-        "translated": not skip_translation,
-        "translation_provider": translation_provider,
-        "translation_model": translation_model,
+        "translated": True,
+        "translation_provider": effective_provider,
+        "translation_model": resolved_model,
+        "transcript_id": transcript["transcript_id"],
+        "variant_id": variant_id,
         "cues": _cues_to_dicts(cues_ko, translated_texts),
     }
