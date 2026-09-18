@@ -20,7 +20,7 @@ def _stub_lookup(monkeypatch, video_id="vid1", title="T"):
 
 
 def _fake_translate(monkeypatch, text="嗨", captured=None):
-    def fake(cues, source_lang, on_batch=None, model=None, provider=None):
+    def fake(cues, source_lang, on_batch=None, model=None, provider=None, checkpoint=None):
         if captured is not None:
             captured["model"] = model
             captured["provider"] = provider
@@ -191,7 +191,7 @@ def test_video_meta_is_reported_before_translation_starts(monkeypatch):
         captions, "fetch_captions", lambda url, lang_preference=None: ([_cue()], "ko", "manual", {})
     )
 
-    def failing_translate(cues, source_lang, on_batch=None, model=None, provider=None):
+    def failing_translate(cues, source_lang, on_batch=None, model=None, provider=None, checkpoint=None):
         if on_batch:
             on_batch(1, 1)
         raise RuntimeError("Translation response missing line numbers: [49]")
@@ -226,7 +226,7 @@ def test_second_call_with_same_settings_is_a_cache_hit_no_llm_call(monkeypatch):
     monkeypatch.setattr(config, "GEMINI_MODEL", "gemini-3.6-flash")
     translate_calls = {"n": 0}
 
-    def fake_translate(cues, source_lang, on_batch=None, model=None, provider=None):
+    def fake_translate(cues, source_lang, on_batch=None, model=None, provider=None, checkpoint=None):
         translate_calls["n"] += 1
         return ["嗨"] * len(cues)
 

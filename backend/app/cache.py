@@ -2,7 +2,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from . import config
@@ -30,8 +30,19 @@ CREATE TABLE IF NOT EXISTS translations (
     UNIQUE(transcript_id, translation_provider, translation_model)
 );
 
+CREATE TABLE IF NOT EXISTS translation_batches (
+    batch_key TEXT PRIMARY KEY,
+    transcript_id TEXT NOT NULL,
+    translation_provider TEXT NOT NULL,
+    translation_model TEXT NOT NULL,
+    translations_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_transcripts_video ON transcripts(video_id);
 CREATE INDEX IF NOT EXISTS idx_translations_transcript ON translations(transcript_id);
+CREATE INDEX IF NOT EXISTS idx_batches_variant
+    ON translation_batches(transcript_id, translation_provider, translation_model);
 """
 
 
@@ -210,6 +221,107 @@ def put_translation(
             ),
         )
     return variant_id
+
+
+# ---------- in-progress translation batches ----------
+#
+# Finished batches of a translation that hasn't completed yet, so a job that dies partway (quota
+# exhausted, a batch out of retries, server restart) can resume instead of re-paying for the
+# batches that already succeeded. A row's key hashes the exact LLM request (see
+# translate._batch_prompt_hash) together with provider/model, so a changed glossary, prompt,
+# batch size or model just misses instead of reusing a stale result. Rows are deleted once the
+# full translation is stored.
+
+_STALE_BATCH_DAYS = 14
+
+
+def _batch_key(transcript_id: str, provider: str, model: Optional[str], prompt_hash: str) -> str:
+    raw = f"{transcript_id}|{provider}|{model or ''}|{prompt_hash}"
+    return hashlib.sha1(raw.encode()).hexdigest()
+
+
+def get_batch(
+    transcript_id: str, provider: str, model: Optional[str], prompt_hash: str
+) -> Optional[List[str]]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT translations_json FROM translation_batches WHERE batch_key = ?",
+            (_batch_key(transcript_id, provider, model, prompt_hash),),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        translations = json.loads(row[0])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(translations, list) or not all(isinstance(t, str) for t in translations):
+        return None
+    return translations
+
+
+def put_batch(
+    transcript_id: str,
+    provider: str,
+    model: Optional[str],
+    prompt_hash: str,
+    translations: List[str],
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO translation_batches (batch_key, transcript_id, translation_provider, "
+            "translation_model, translations_json, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(batch_key) DO UPDATE SET translations_json=excluded.translations_json, "
+            "created_at=excluded.created_at",
+            (
+                _batch_key(transcript_id, provider, model, prompt_hash),
+                transcript_id,
+                provider,
+                model or "",
+                json.dumps(translations, ensure_ascii=False),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+
+def clear_batches(transcript_id: str, provider: str, model: Optional[str]) -> int:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM translation_batches WHERE transcript_id = ? AND translation_provider = ? "
+            "AND translation_model = ?",
+            (transcript_id, provider, model or ""),
+        )
+    return cursor.rowcount
+
+
+def purge_stale_batches(max_age_days: int = _STALE_BATCH_DAYS) -> int:
+    """Drops checkpoints from jobs that failed and were never retried."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM translation_batches WHERE created_at < ?", (cutoff,))
+    return cursor.rowcount
+
+
+class BatchCheckpoint:
+    """One translation's (transcript, provider, model) view of the in-progress batch store -
+    what translate.translate_cues talks to, so translate.py needn't know about the DB."""
+
+    def __init__(self, transcript_id: str, provider: str, model: Optional[str]):
+        self.transcript_id = transcript_id
+        self.provider = provider
+        self.model = model
+        self.resumed = 0
+
+    def load(self, prompt_hash: str) -> Optional[List[str]]:
+        translations = get_batch(self.transcript_id, self.provider, self.model, prompt_hash)
+        if translations is not None:
+            self.resumed += 1
+        return translations
+
+    def save(self, prompt_hash: str, translations: List[str]) -> None:
+        put_batch(self.transcript_id, self.provider, self.model, prompt_hash, translations)
+
+    def clear(self) -> int:
+        return clear_batches(self.transcript_id, self.provider, self.model)
 
 
 def get_variant(variant_id: str) -> Optional[dict]:

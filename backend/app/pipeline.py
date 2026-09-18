@@ -323,14 +323,27 @@ def process_video(
             "cues": _cues_to_dicts(cues_ko, [c.text for c in cached_translation["cues"]]),
         }
 
+    # Batches finished by an earlier run that failed partway are reused, unless the caller asked
+    # for a fresh translation.
+    checkpoint = cache.BatchCheckpoint(transcript["transcript_id"], effective_provider, resolved_model)
+    if force_refresh:
+        checkpoint.clear()
+
     def on_batch(batch_num: int, total_batches: int) -> None:
         detail = f"batch {batch_num}/{total_batches}"
+        if checkpoint.resumed:
+            detail += f" ({checkpoint.resumed} resumed from an earlier run)"
         if effective_provider == "gemini" and total_batches > config.GEMINI_RPM:
             detail += f" (throttled to {config.GEMINI_RPM}/min on Gemini's free tier)"
         report("translating", detail, **video_meta)
 
     translated_texts = translate.translate_cues(
-        cues_ko, source_lang, on_batch=on_batch, model=llm_model, provider=provider
+        cues_ko,
+        source_lang,
+        on_batch=on_batch,
+        model=llm_model,
+        provider=provider,
+        checkpoint=checkpoint,
     )
     variant_id = cache.put_translation(
         transcript["transcript_id"],
@@ -338,6 +351,8 @@ def process_video(
         resolved_model,
         [Cue(start=c.start, end=c.end, text=t) for c, t in zip(cues_ko, translated_texts)],
     )
+    checkpoint.clear()
+    cache.purge_stale_batches()
 
     report("done")
     return {

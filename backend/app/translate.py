@@ -1,10 +1,11 @@
+import hashlib
 import json
 import logging
 import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Protocol
 
 from . import config, glossary
 from .rate_limiter import RateLimiter
@@ -20,6 +21,15 @@ _LANG_NAMES = {"ko": "Korean", "en": "English"}
 _gemini_limiter = RateLimiter(config.GEMINI_RPM, period_seconds=60.0)
 
 BatchProgressCallback = Callable[[int, int], None]
+
+
+class BatchCheckpoint(Protocol):
+    """Where finished batches are saved as they complete, so a job that fails partway can resume
+    instead of re-paying for them. cache.BatchCheckpoint is the real implementation."""
+
+    def load(self, prompt_hash: str) -> Optional[List[str]]: ...
+
+    def save(self, prompt_hash: str, translations: List[str]) -> None: ...
 
 # Provider functions report token usage / stop reason here (per thread, since each job runs in its
 # own thread) rather than via their return value, so their signatures stay List[str]-returning.
@@ -74,6 +84,7 @@ def _openai_compat_call_info(data: dict, model: str) -> None:
 @dataclass
 class _RunStats:
     batches_done: int = 0
+    batches_resumed: int = 0
     api_calls: int = 0
     retries: int = 0
     input_tokens: int = 0
@@ -109,6 +120,13 @@ def _user_prompt(texts: List[str], source_lang: str) -> str:
         "Use the exact same line numbers as the input, include every line number exactly "
         "once, and output no other text.\n\n" + numbered
     )
+
+
+def _batch_prompt_hash(texts: List[str], source_lang: str) -> str:
+    """Identifies a batch by the exact request the LLM would receive (glossary and prompt wording
+    included), so a checkpoint can only ever be reused for an identical request."""
+    request = _system_prompt() + "\0" + _user_prompt(texts, source_lang)
+    return hashlib.sha1(request.encode("utf-8")).hexdigest()
 
 
 def _parse_json_objects(raw: str, expected_len: int) -> List[str]:
@@ -425,6 +443,7 @@ def translate_cues(
     on_batch: Optional[BatchProgressCallback] = None,
     model: Optional[str] = None,
     provider: Optional[str] = None,
+    checkpoint: Optional[BatchCheckpoint] = None,
 ) -> List[str]:
     results: List[str] = []
     batch_size = config.TRANSLATE_BATCH_SIZE
@@ -432,29 +451,42 @@ def translate_cues(
     stats = _RunStats()
     try:
         for batch_num, batch in enumerate(batches, start=1):
+            texts = [c.text for c in batch]
+            batch_label = f"{batch_num}/{len(batches)}"
+
+            prompt_hash = _batch_prompt_hash(texts, source_lang) if checkpoint else None
+            saved = checkpoint.load(prompt_hash) if checkpoint else None
+            if saved is not None and len(saved) == len(texts):
+                logger.info("translate batch %s resumed from checkpoint lines=%d", batch_label, len(texts))
+                results.extend(saved)
+                stats.batches_resumed += 1
+                stats.batches_done += 1
+                continue
+
             if on_batch:
                 on_batch(batch_num, len(batches))
-            texts = [c.text for c in batch]
-            results.extend(
-                _translate_batch(
-                    texts,
-                    source_lang,
-                    model,
-                    provider,
-                    batch_label=f"{batch_num}/{len(batches)}",
-                    stats=stats,
-                )
+            translated = _translate_batch(
+                texts, source_lang, model, provider, batch_label=batch_label, stats=stats
             )
+            if checkpoint:
+                try:
+                    checkpoint.save(prompt_hash, translated)
+                except Exception:
+                    # Losing a checkpoint only costs a possible re-translation later; it must
+                    # never fail a batch that was just translated successfully.
+                    logger.warning("Could not save checkpoint for batch %s", batch_label, exc_info=True)
+            results.extend(translated)
             stats.batches_done += 1
     finally:
         # Logged even when a later batch raises - the tokens already spent on earlier batches
         # are exactly what a failed run wastes.
         logger.info(
-            "translate summary provider=%s batches=%d/%d api_calls=%d retries=%d "
+            "translate summary provider=%s batches=%d/%d resumed=%d api_calls=%d retries=%d "
             "in_tok=%d out_tok=%d think_tok=%d",
             provider or config.TRANSLATION_PROVIDER,
             stats.batches_done,
             len(batches),
+            stats.batches_resumed,
             stats.api_calls,
             stats.retries,
             stats.input_tokens,
