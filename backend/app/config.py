@@ -53,6 +53,8 @@ GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
 _DEFAULT_TRANSLATE_BATCH_SIZE = "50" if TRANSLATION_PROVIDER in ("deepseek", "local") else "200"
 TRANSLATE_BATCH_SIZE = int(os.getenv("TRANSLATE_BATCH_SIZE", _DEFAULT_TRANSLATE_BATCH_SIZE))
 
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
 
 # YouTube periodically walls off yt-dlp with a "Sign in to confirm you're not a bot" error.

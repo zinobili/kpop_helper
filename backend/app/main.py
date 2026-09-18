@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -9,6 +10,20 @@ from pydantic import BaseModel
 
 from . import cache, config, glossary, jobs, pipeline
 from .srt_utils import cues_to_srt
+
+def _configure_logging() -> None:
+    # uvicorn only configures its own loggers, so without this the kpop_helper.* INFO lines
+    # (LLM token usage, retries) are silently dropped by Python's WARNING-level default.
+    pkg_logger = logging.getLogger("kpop_helper")
+    if pkg_logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    pkg_logger.addHandler(handler)
+    pkg_logger.setLevel(config.LOG_LEVEL)
+
+
+_configure_logging()
 
 app = FastAPI(title="kpop_helper backend")
 
