@@ -128,3 +128,22 @@ def test_status_errors_still_follow_the_existing_rules(monkeypatch):
     with pytest.raises(httpx.HTTPStatusError):
         translate._translate_batch_deepseek(["x"], "ko")  # 4xx not retried
     assert len(calls) == 1
+
+
+# ---------- DEEPSEEK_THINKING parsing ----------
+
+
+@pytest.mark.parametrize("value", ["on", "ON", "true", "1", "enabled", " Enabled "])
+def test_parse_thinking_accepts_on_values(value):
+    assert config.parse_thinking(value) == "enabled"
+
+
+@pytest.mark.parametrize("value", ["off", "OFF", "false", "0", "disabled", " Disabled "])
+def test_parse_thinking_accepts_off_values(value):
+    assert config.parse_thinking(value) == "disabled"
+
+
+@pytest.mark.parametrize("value", ["", "maybe", "high", "none"])
+def test_parse_thinking_rejects_anything_else_with_a_clear_message(value):
+    with pytest.raises(ValueError, match="DEEPSEEK_THINKING"):
+        config.parse_thinking(value)
