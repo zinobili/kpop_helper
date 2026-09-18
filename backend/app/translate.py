@@ -1,8 +1,11 @@
+import hashlib
 import json
 import logging
 import re
+import threading
 import time
-from typing import Callable, List, Optional
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Protocol
 
 from . import config, glossary
 from .rate_limiter import RateLimiter
@@ -18,6 +21,81 @@ _LANG_NAMES = {"ko": "Korean", "en": "English"}
 _gemini_limiter = RateLimiter(config.GEMINI_RPM, period_seconds=60.0)
 
 BatchProgressCallback = Callable[[int, int], None]
+
+
+class BatchCheckpoint(Protocol):
+    """Where finished batches are saved as they complete, so a job that fails partway can resume
+    instead of re-paying for them. cache.BatchCheckpoint is the real implementation."""
+
+    def load(self, prompt_hash: str) -> Optional[List[str]]: ...
+
+    def save(self, prompt_hash: str, translations: List[str]) -> None: ...
+
+# Provider functions report token usage / stop reason here (per thread, since each job runs in its
+# own thread) rather than via their return value, so their signatures stay List[str]-returning.
+_call_info = threading.local()
+
+_TRUNCATION_STOP_REASONS = ("max_tokens", "length")
+
+
+def _record_call_info(
+    model=None, input_tokens=None, output_tokens=None, thinking_tokens=None, stop_reason=None
+) -> None:
+    _call_info.value = {
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "thinking_tokens": thinking_tokens,
+        "stop_reason": None if stop_reason is None else str(stop_reason),
+    }
+
+
+def _take_call_info() -> dict:
+    info = getattr(_call_info, "value", None) or {}
+    _call_info.value = None
+    return info
+
+
+def _is_truncated(info: dict) -> bool:
+    stop = (info.get("stop_reason") or "").lower()
+    return any(marker in stop for marker in _TRUNCATION_STOP_REASONS)
+
+
+def _format_call_info(info: dict) -> str:
+    return (
+        f"model={info.get('model')} in_tok={info.get('input_tokens')} "
+        f"out_tok={info.get('output_tokens')} think_tok={info.get('thinking_tokens')} "
+        f"stop={info.get('stop_reason')}"
+    )
+
+
+def _openai_compat_call_info(data: dict, model: str) -> None:
+    usage = data.get("usage") or {}
+    choices = data.get("choices") or [{}]
+    _record_call_info(
+        model=model,
+        input_tokens=usage.get("prompt_tokens"),
+        output_tokens=usage.get("completion_tokens"),
+        thinking_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+        stop_reason=choices[0].get("finish_reason"),
+    )
+
+
+@dataclass
+class _RunStats:
+    batches_done: int = 0
+    batches_resumed: int = 0
+    api_calls: int = 0
+    retries: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    thinking_tokens: int = 0
+
+    def add_call(self, info: dict) -> None:
+        self.api_calls += 1
+        self.input_tokens += info.get("input_tokens") or 0
+        self.output_tokens += info.get("output_tokens") or 0
+        self.thinking_tokens += info.get("thinking_tokens") or 0
 
 
 def _system_prompt() -> str:
@@ -44,6 +122,13 @@ def _user_prompt(texts: List[str], source_lang: str) -> str:
     )
 
 
+def _batch_prompt_hash(texts: List[str], source_lang: str) -> str:
+    """Identifies a batch by the exact request the LLM would receive (glossary and prompt wording
+    included), so a checkpoint can only ever be reused for an identical request."""
+    request = _system_prompt() + "\0" + _user_prompt(texts, source_lang)
+    return hashlib.sha1(request.encode("utf-8")).hexdigest()
+
+
 def _parse_json_objects(raw: str, expected_len: int) -> List[str]:
     raw = _JSON_FENCE_RE.sub("", raw).strip()
     items = json.loads(raw)
@@ -67,6 +152,13 @@ def _translate_batch_anthropic(texts: List[str], source_lang: str) -> List[str]:
         max_tokens=4096,
         system=_system_prompt(),
         messages=[{"role": "user", "content": _user_prompt(texts, source_lang)}],
+    )
+    usage = getattr(response, "usage", None)
+    _record_call_info(
+        model=config.ANTHROPIC_MODEL,
+        input_tokens=getattr(usage, "input_tokens", None),
+        output_tokens=getattr(usage, "output_tokens", None),
+        stop_reason=getattr(response, "stop_reason", None),
     )
     raw = "".join(block.text for block in response.content if block.type == "text")
     return _parse_json_objects(raw, len(texts))
@@ -146,6 +238,16 @@ def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
                     response_mime_type="application/json",
                 ),
             )
+            usage = getattr(response, "usage_metadata", None)
+            candidates = getattr(response, "candidates", None) or []
+            finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+            _record_call_info(
+                model=config.GEMINI_MODEL,
+                input_tokens=getattr(usage, "prompt_token_count", None),
+                output_tokens=getattr(usage, "candidates_token_count", None),
+                thinking_tokens=getattr(usage, "thoughts_token_count", None),
+                stop_reason=getattr(finish_reason, "name", finish_reason),
+            )
             return _parse_json_objects(response.text, len(texts))
         except ClientError as exc:
             if exc.code != 429:
@@ -175,6 +277,18 @@ def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
 _DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
 
+def _deepseek_backoff(attempt: int, reason: str) -> None:
+    delay = min(60.0, 5.0 * (2**attempt))  # exponential backoff: 5s, 10s, 20s, 40s...
+    logger.warning(
+        "DeepSeek request failed (%s, attempt %d/%d); retrying in %.1fs",
+        reason,
+        attempt + 1,
+        config.DEEPSEEK_MAX_RETRIES,
+        delay,
+    )
+    time.sleep(delay)
+
+
 def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
     import httpx
 
@@ -194,6 +308,7 @@ def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
             {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": _user_prompt(texts, source_lang)},
         ],
+        "thinking": {"type": config.DEEPSEEK_THINKING},
     }
     headers = {"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"}
 
@@ -210,18 +325,18 @@ def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
                 raise
             if attempt == config.DEEPSEEK_MAX_RETRIES:
                 raise
-            delay = min(60.0, 5.0 * (2**attempt))  # exponential backoff: 5s, 10s, 20s, 40s...
-            logger.warning(
-                "DeepSeek request failed (status %d, attempt %d/%d); retrying in %.1fs",
-                status,
-                attempt + 1,
-                config.DEEPSEEK_MAX_RETRIES,
-                delay,
-            )
-            time.sleep(delay)
+            _deepseek_backoff(attempt, f"status {status}")
+        except httpx.TransportError as exc:
+            # A dropped connection (RemoteProtocolError), timeout, or connect failure - typically
+            # a long response cut off mid-stream. No status code to inspect, but retrying is safe:
+            # nothing was received, and the request is a pure translation with no side effects.
+            if attempt == config.DEEPSEEK_MAX_RETRIES:
+                raise
+            _deepseek_backoff(attempt, type(exc).__name__)
 
-    raw = response.json()["choices"][0]["message"]["content"]
-    return _parse_json_objects(raw, len(texts))
+    data = response.json()
+    _openai_compat_call_info(data, config.DEEPSEEK_MODEL)
+    return _parse_json_objects(data["choices"][0]["message"]["content"], len(texts))
 
 
 def _translate_batch_local(texts: List[str], source_lang: str, model: Optional[str]) -> List[str]:
@@ -244,8 +359,9 @@ def _translate_batch_local(texts: List[str], source_lang: str, model: Optional[s
         f"{config.LOCAL_LLM_BASE_URL}/chat/completions", json=payload, timeout=180
     )
     response.raise_for_status()
-    raw = response.json()["choices"][0]["message"]["content"]
-    return _parse_json_objects(raw, len(texts))
+    data = response.json()
+    _openai_compat_call_info(data, model_name)
+    return _parse_json_objects(data["choices"][0]["message"]["content"], len(texts))
 
 
 def _translate_batch_once(
@@ -269,24 +385,68 @@ _BATCH_RETRY_ATTEMPTS = 3
 
 
 def _translate_batch(
-    texts: List[str], source_lang: str, model: Optional[str] = None, provider: Optional[str] = None
+    texts: List[str],
+    source_lang: str,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    batch_label: str = "",
+    stats: Optional[_RunStats] = None,
 ) -> List[str]:
-    for attempt in range(_BATCH_RETRY_ATTEMPTS):
+    provider_name = provider or config.TRANSLATION_PROVIDER
+    for attempt in range(1, _BATCH_RETRY_ATTEMPTS + 1):
+        _call_info.value = None
+        started = time.monotonic()
         try:
-            return _translate_batch_once(texts, source_lang, model, provider)
+            result = _translate_batch_once(texts, source_lang, model, provider)
         except (ValueError, json.JSONDecodeError) as exc:
             # LLMs occasionally skip a line (often near the end of a large batch) or return
             # malformed JSON; a fresh retry usually clears it. Weaker/faster models (e.g.
             # DeepSeek's default) do this more often than Gemini/Claude, so allow a couple of
-            # retries rather than just one.
-            if attempt == _BATCH_RETRY_ATTEMPTS - 1:
-                raise
+            # retries rather than just one. The failed attempt's tokens were still billed, so
+            # they're counted and logged here.
+            info = _take_call_info()
+            will_retry = attempt < _BATCH_RETRY_ATTEMPTS
+            if stats is not None:
+                stats.add_call(info)
+                stats.retries += 1 if will_retry else 0
             logger.warning(
-                "Batch translation failed (attempt %d/%d): %s; retrying",
-                attempt + 1,
+                "translate batch %s FAILED provider=%s attempt=%d/%d lines=%d secs=%.1f %s "
+                "reason=%s: %s; %s",
+                batch_label or "-",
+                provider_name,
+                attempt,
                 _BATCH_RETRY_ATTEMPTS,
+                len(texts),
+                time.monotonic() - started,
+                _format_call_info(info),
+                type(exc).__name__,
                 exc,
+                "retrying" if will_retry else "giving up",
             )
+            if _is_truncated(info):
+                logger.warning(
+                    "translate batch %s output was TRUNCATED (stop=%s) - the batch likely exceeds "
+                    "the model's max output tokens; lower TRANSLATE_BATCH_SIZE",
+                    batch_label or "-",
+                    info.get("stop_reason"),
+                )
+            if not will_retry:
+                raise
+            continue
+        info = _take_call_info()
+        if stats is not None:
+            stats.add_call(info)
+        logger.info(
+            "translate batch %s ok provider=%s attempt=%d/%d lines=%d secs=%.1f %s",
+            batch_label or "-",
+            provider_name,
+            attempt,
+            _BATCH_RETRY_ATTEMPTS,
+            len(texts),
+            time.monotonic() - started,
+            _format_call_info(info),
+        )
+        return result
 
 
 def translate_cues(
@@ -295,13 +455,54 @@ def translate_cues(
     on_batch: Optional[BatchProgressCallback] = None,
     model: Optional[str] = None,
     provider: Optional[str] = None,
+    checkpoint: Optional[BatchCheckpoint] = None,
 ) -> List[str]:
     results: List[str] = []
     batch_size = config.TRANSLATE_BATCH_SIZE
     batches = [cues[i : i + batch_size] for i in range(0, len(cues), batch_size)]
-    for batch_num, batch in enumerate(batches, start=1):
-        if on_batch:
-            on_batch(batch_num, len(batches))
-        texts = [c.text for c in batch]
-        results.extend(_translate_batch(texts, source_lang, model, provider))
+    stats = _RunStats()
+    try:
+        for batch_num, batch in enumerate(batches, start=1):
+            texts = [c.text for c in batch]
+            batch_label = f"{batch_num}/{len(batches)}"
+
+            prompt_hash = _batch_prompt_hash(texts, source_lang) if checkpoint else None
+            saved = checkpoint.load(prompt_hash) if checkpoint else None
+            if saved is not None and len(saved) == len(texts):
+                logger.info("translate batch %s resumed from checkpoint lines=%d", batch_label, len(texts))
+                results.extend(saved)
+                stats.batches_resumed += 1
+                stats.batches_done += 1
+                continue
+
+            if on_batch:
+                on_batch(batch_num, len(batches))
+            translated = _translate_batch(
+                texts, source_lang, model, provider, batch_label=batch_label, stats=stats
+            )
+            if checkpoint:
+                try:
+                    checkpoint.save(prompt_hash, translated)
+                except Exception:
+                    # Losing a checkpoint only costs a possible re-translation later; it must
+                    # never fail a batch that was just translated successfully.
+                    logger.warning("Could not save checkpoint for batch %s", batch_label, exc_info=True)
+            results.extend(translated)
+            stats.batches_done += 1
+    finally:
+        # Logged even when a later batch raises - the tokens already spent on earlier batches
+        # are exactly what a failed run wastes.
+        logger.info(
+            "translate summary provider=%s batches=%d/%d resumed=%d api_calls=%d retries=%d "
+            "in_tok=%d out_tok=%d think_tok=%d",
+            provider or config.TRANSLATION_PROVIDER,
+            stats.batches_done,
+            len(batches),
+            stats.batches_resumed,
+            stats.api_calls,
+            stats.retries,
+            stats.input_tokens,
+            stats.output_tokens,
+            stats.thinking_tokens,
+        )
     return results

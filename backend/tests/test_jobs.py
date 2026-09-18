@@ -89,3 +89,48 @@ def test_list_jobs_omits_full_result_payload(monkeypatch):
     summary = jobs.list_jobs()[0]
     assert "cues" not in summary
     assert "result" not in summary
+
+
+def test_on_progress_meta_is_merged_into_job(monkeypatch):
+    def fake_process_video(url, force_refresh, on_progress, force_stt, skip_translation, **_kwargs):
+        on_progress("translating", "batch 1/2", video_id="v1", title="Real Title")
+        return {"video_id": "v1", "title": "Real Title"}
+
+    monkeypatch.setattr(jobs.pipeline, "process_video", fake_process_video)
+    job_id = jobs.create_job("https://youtu.be/v1")
+    assert _wait_until(lambda: jobs.get_job(job_id)["status"] == "done")
+
+    job = jobs.get_job(job_id)
+    assert job["video_id"] == "v1"
+    assert job["title"] == "Real Title"
+
+
+def test_list_jobs_shows_title_for_a_job_that_fails_after_resolving_it(monkeypatch):
+    """A job that errors partway through translation should still show the video's title
+    (known before the failure), not just fall back to the raw URL."""
+
+    def fake_process_video(url, force_refresh, on_progress, force_stt, skip_translation, **_kwargs):
+        on_progress("translating", "batch 1/1", video_id="v1", title="Real Title")
+        raise RuntimeError("Translation response missing line numbers: [49]")
+
+    monkeypatch.setattr(jobs.pipeline, "process_video", fake_process_video)
+    job_id = jobs.create_job("https://youtu.be/v1")
+    assert _wait_until(lambda: jobs.get_job(job_id)["status"] == "error")
+
+    summary = jobs.list_jobs()[0]
+    assert summary["status"] == "error"
+    assert summary["video_id"] == "v1"
+    assert summary["title"] == "Real Title"
+
+
+def test_list_jobs_falls_back_to_none_when_failure_precedes_resolution(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("yt-dlp exploded before resolving anything")
+
+    monkeypatch.setattr(jobs.pipeline, "process_video", boom)
+    job_id = jobs.create_job("https://youtu.be/bad")
+    assert _wait_until(lambda: jobs.get_job(job_id)["status"] == "error")
+
+    summary = jobs.list_jobs()[0]
+    assert summary["title"] is None
+    assert summary["video_id"] is None

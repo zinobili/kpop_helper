@@ -25,6 +25,9 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_MAX_RETRIES = int(os.getenv("DEEPSEEK_MAX_RETRIES", "5"))
+# "disabled" or "enabled". deepseek-flash/deepseek-v4-pro think by default, and the reasoning
+# tokens are billed as output - for subtitle translation that was ~96% of output tokens.
+DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "disabled")
 
 # For TRANSLATION_PROVIDER=local: any OpenAI-compatible chat-completions server running on
 # your machine (Ollama, LM Studio, llama.cpp server, etc). Unlike the other providers, the
@@ -52,6 +55,8 @@ GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
 # models are typically weaker still, so default them small too.
 _DEFAULT_TRANSLATE_BATCH_SIZE = "50" if TRANSLATION_PROVIDER in ("deepseek", "local") else "200"
 TRANSLATE_BATCH_SIZE = int(os.getenv("TRANSLATE_BATCH_SIZE", _DEFAULT_TRANSLATE_BATCH_SIZE))
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "small")
 

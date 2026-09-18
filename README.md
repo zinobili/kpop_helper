@@ -173,4 +173,8 @@ See [backlog.md](backlog.md) for known open issues (e.g. YouTube's yt-dlp bot-wa
   tokens (standard pricing; DeepSeek also runs cheaper off-peak discounts) — well under a cent
   per video, with no daily request cap to hit. Check https://api-docs.deepseek.com/quick_start/pricing
   for current rates before relying on this number.
+- **Reasoning ("thinking") tokens can dominate the bill.** Some models think by default and bill
+  that as output; on DeepSeek `deepseek-flash` it was 96% of output tokens for subtitle
+  translation. See [docs/thinking-mode.md](docs/thinking-mode.md) for measurements, per-provider
+  settings, and how to check your own usage.
 - Everything else (caption fetch, Whisper fallback, caching) runs locally and is free.

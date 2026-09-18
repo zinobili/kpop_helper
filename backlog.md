@@ -29,4 +29,15 @@
 
 - [x] option to choose whether to translate from youtube english subtitle or from korean subtitle
 
+- [x] Cache multiple translation variants per video instead of one row per video_id, so
+  translating with a different LLM or a different caption language keeps prior results instead
+  of overwriting them. Cache is now split into `transcripts` (keyed by video_id + caption
+  language + source: manual/auto/whisper) and `translations` (keyed by transcript + provider +
+  model), with a `variant_id` per translation. The Chrome extension has a caption-language
+  selector (no LLM picker) and prompts "use this existing translation?" via a new
+  `/translate-preview` endpoint when a different-provider translation already exists for the
+  requested language, before falling back to a fresh translate. The web dashboard now lists one
+  row per variant. Migration from the old single-row-per-video cache runs automatically on
+  first use of an existing DB.
+
 

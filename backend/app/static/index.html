@@ -342,7 +342,9 @@ function showResult(result) {
   videoTitleEl.style.display = "block";
   sourceBadge.textContent = `source: ${result.source_lang} (${result.source_type})`
     + (result.translated ? "" : " - untranslated");
-  downloadLink.href = `${API}/subtitles/${result.video_id}.srt`;
+  downloadLink.href = result.variant_id
+    ? `${API}/subtitles/variant/${result.variant_id}.srt`
+    : `${API}/subtitles/${result.video_id}.srt`;
   downloadLink.setAttribute("download", `${result.video_id}.srt`);
   metaRow.style.display = "flex";
   playerShell.classList.add("visible");

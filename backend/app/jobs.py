@@ -21,10 +21,12 @@ def _run_job(
     llm_model: Optional[str] = None,
     translation_provider: Optional[str] = None,
 ) -> None:
-    def on_progress(stage: str, detail: Optional[str] = None) -> None:
+    def on_progress(stage: str, detail: Optional[str] = None, **meta) -> None:
         with _lock:
             _jobs[job_id]["stage"] = stage
             _jobs[job_id]["detail"] = detail
+            if meta:
+                _jobs[job_id].update(meta)
 
     try:
         result = pipeline.process_video(
@@ -92,6 +94,9 @@ def list_jobs() -> list:
     summaries = []
     for job_id, job in reversed(items):
         result = job.get("result")
+        # Once the pipeline resolves which video/transcript it's working on, on_progress's
+        # meta kwargs land directly on the job dict - so a job that later fails (e.g. mid
+        # translation) still shows the video's title instead of falling back to its raw URL.
         summaries.append(
             {
                 "job_id": job_id,
@@ -100,13 +105,15 @@ def list_jobs() -> list:
                 "stage": job.get("stage"),
                 "detail": job.get("detail"),
                 "error": job.get("error"),
-                "video_id": result.get("video_id") if result else None,
-                "title": result.get("title") if result else None,
-                "source_lang": result.get("source_lang") if result else None,
-                "source_type": result.get("source_type") if result else None,
+                "video_id": (result.get("video_id") if result else None) or job.get("video_id"),
+                "title": (result.get("title") if result else None) or job.get("title"),
+                "source_lang": (result.get("source_lang") if result else None) or job.get("source_lang"),
+                "source_type": (result.get("source_type") if result else None) or job.get("source_type"),
                 "translated": result.get("translated") if result else None,
                 "translation_provider": result.get("translation_provider") if result else None,
                 "translation_model": result.get("translation_model") if result else None,
+                "transcript_id": (result.get("transcript_id") if result else None) or job.get("transcript_id"),
+                "variant_id": result.get("variant_id") if result else None,
             }
         )
     return summaries
