@@ -277,6 +277,18 @@ def _translate_batch_gemini(texts: List[str], source_lang: str) -> List[str]:
 _DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
 
+def _deepseek_backoff(attempt: int, reason: str) -> None:
+    delay = min(60.0, 5.0 * (2**attempt))  # exponential backoff: 5s, 10s, 20s, 40s...
+    logger.warning(
+        "DeepSeek request failed (%s, attempt %d/%d); retrying in %.1fs",
+        reason,
+        attempt + 1,
+        config.DEEPSEEK_MAX_RETRIES,
+        delay,
+    )
+    time.sleep(delay)
+
+
 def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
     import httpx
 
@@ -313,15 +325,14 @@ def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
                 raise
             if attempt == config.DEEPSEEK_MAX_RETRIES:
                 raise
-            delay = min(60.0, 5.0 * (2**attempt))  # exponential backoff: 5s, 10s, 20s, 40s...
-            logger.warning(
-                "DeepSeek request failed (status %d, attempt %d/%d); retrying in %.1fs",
-                status,
-                attempt + 1,
-                config.DEEPSEEK_MAX_RETRIES,
-                delay,
-            )
-            time.sleep(delay)
+            _deepseek_backoff(attempt, f"status {status}")
+        except httpx.TransportError as exc:
+            # A dropped connection (RemoteProtocolError), timeout, or connect failure - typically
+            # a long response cut off mid-stream. No status code to inspect, but retrying is safe:
+            # nothing was received, and the request is a pure translation with no side effects.
+            if attempt == config.DEEPSEEK_MAX_RETRIES:
+                raise
+            _deepseek_backoff(attempt, type(exc).__name__)
 
     data = response.json()
     _openai_compat_call_info(data, config.DEEPSEEK_MODEL)
