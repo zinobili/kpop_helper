@@ -296,6 +296,7 @@ def _translate_batch_deepseek(texts: List[str], source_lang: str) -> List[str]:
             {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": _user_prompt(texts, source_lang)},
         ],
+        "thinking": {"type": config.DEEPSEEK_THINKING},
     }
     headers = {"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"}
 

@@ -25,6 +25,9 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_MAX_RETRIES = int(os.getenv("DEEPSEEK_MAX_RETRIES", "5"))
+# "disabled" or "enabled". deepseek-flash/deepseek-v4-pro think by default, and the reasoning
+# tokens are billed as output - for subtitle translation that was ~96% of output tokens.
+DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "disabled")
 
 # For TRANSLATION_PROVIDER=local: any OpenAI-compatible chat-completions server running on
 # your machine (Ollama, LM Studio, llama.cpp server, etc). Unlike the other providers, the
