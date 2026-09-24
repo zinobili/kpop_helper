@@ -17,10 +17,17 @@ if not _data_dir.is_absolute():
 DATA_DIR = _data_dir.resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini", "anthropic", "deepseek", or "local"
+TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini", "anthropic", "deepseek", "local", or "claude_agent"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+# For TRANSLATION_PROVIDER=claude_agent: drives the Claude Code CLI (via the Claude Agent SDK) as
+# a local subprocess instead of calling the Anthropic API directly. Auth is whatever the CLI
+# itself is configured with on this machine - run `claude login` once to use a Claude
+# subscription instead of metered API billing - not ANTHROPIC_API_KEY above, which is only read
+# by the "anthropic" provider. Leave unset to let the CLI use its own default model.
+CLAUDE_AGENT_MODEL = os.getenv("CLAUDE_AGENT_MODEL", "")
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")

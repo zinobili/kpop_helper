@@ -19,6 +19,8 @@ def _resolved_model(provider: str, llm_model: Optional[str]) -> Optional[str]:
         return config.DEEPSEEK_MODEL
     if provider == "local":
         return llm_model or config.LOCAL_LLM_MODEL or None
+    if provider == "claude_agent":
+        return config.CLAUDE_AGENT_MODEL or None
     return None
 
 
