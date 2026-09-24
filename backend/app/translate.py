@@ -179,6 +179,7 @@ def _translate_batch_claude_agent(texts: List[str], source_lang: str) -> List[st
         ClaudeAgentOptions,
         CLINotFoundError,
         ResultMessage,
+        SystemMessage,
         TextBlock,
         query,
     )
@@ -197,7 +198,13 @@ def _translate_batch_claude_agent(texts: List[str], source_lang: str) -> List[st
         reply_text = ""
         info: dict = {}
         async for message in query(prompt=_user_prompt(texts, source_lang), options=options):
-            if isinstance(message, AssistantMessage):
+            if isinstance(message, SystemMessage) and message.subtype == "init":
+                # The earliest confirmation the CLI subprocess actually spawned, connected, and
+                # accepted the job - logged so a batch that hangs afterward is visibly stuck
+                # inside the agent's own turn, not stuck failing to start.
+                session_id = (message.data or {}).get("session_id")
+                logger.info("claude_agent subprocess started session_id=%s lines=%d", session_id, len(texts))
+            elif isinstance(message, AssistantMessage):
                 if message.error:
                     raise RuntimeError(f"Claude Code agent error: {message.error}")
                 reply_text = "".join(b.text for b in message.content if isinstance(b, TextBlock))
