@@ -29,6 +29,13 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 # by the "anthropic" provider. Leave unset to let the CLI use its own default model.
 CLAUDE_AGENT_MODEL = os.getenv("CLAUDE_AGENT_MODEL", "")
 
+# The SDK finds the `claude` binary via shutil.which() on the process's own PATH by default -
+# fine for an interactive shell, but a service/system account (e.g. running the backend as a
+# Windows service or systemd unit) often has a different PATH that doesn't include wherever
+# `npm install -g` put it. Set this to the CLI's full path (e.g. output of `where claude` /
+# `which claude`) to bypass the PATH search entirely. Leave unset to keep using PATH lookup.
+CLAUDE_AGENT_CLI_PATH = os.getenv("CLAUDE_AGENT_CLI_PATH", "")
+
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_MAX_RETRIES = int(os.getenv("DEEPSEEK_MAX_RETRIES", "5"))

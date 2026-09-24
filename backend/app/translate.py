@@ -192,6 +192,9 @@ def _translate_batch_claude_agent(texts: List[str], source_lang: str) -> List[st
         tools=[],
         setting_sources=[],
         model=config.CLAUDE_AGENT_MODEL or None,
+        # Skips the PATH search (shutil.which("claude")) when set - needed when whatever runs
+        # this backend has a different PATH than the shell `claude login` was run from.
+        cli_path=config.CLAUDE_AGENT_CLI_PATH or None,
     )
 
     async def _run():
@@ -225,7 +228,8 @@ def _translate_batch_claude_agent(texts: List[str], source_lang: str) -> List[st
         raise RuntimeError(
             "Claude Code CLI not found. Install it (npm install -g @anthropic-ai/claude-code) "
             "and run `claude login` once on this machine (or set ANTHROPIC_API_KEY for the CLI "
-            "itself), or switch TRANSLATION_PROVIDER to something else."
+            "itself), set CLAUDE_AGENT_CLI_PATH if it's installed but not on this process's "
+            "PATH, or switch TRANSLATION_PROVIDER to something else."
         ) from exc
 
     _record_call_info(**info)
