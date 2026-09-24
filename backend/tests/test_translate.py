@@ -180,7 +180,6 @@ def test_translate_batch_claude_agent_parses_assistant_reply(monkeypatch):
 
     assert result == ["你好"]
     assert captured["options"].tools == []
-    assert captured["options"].permission_mode == "bypassPermissions"
     assert "hi" in captured["prompt"]
     info = _take_call_info()
     assert info == {

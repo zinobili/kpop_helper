@@ -185,8 +185,10 @@ def _translate_batch_claude_agent(texts: List[str], source_lang: str) -> List[st
 
     options = ClaudeAgentOptions(
         system_prompt=_system_prompt(),
+        # tools=[] means the agent never has anything to request permission for, so
+        # permission_mode is left at its default rather than forced to "bypassPermissions"
+        # (which the CLI refuses outright when running as root, as this backend may well do).
         tools=[],
-        permission_mode="bypassPermissions",
         setting_sources=[],
         model=config.CLAUDE_AGENT_MODEL or None,
     )
