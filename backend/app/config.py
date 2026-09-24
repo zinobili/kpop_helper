@@ -17,10 +17,24 @@ if not _data_dir.is_absolute():
 DATA_DIR = _data_dir.resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini", "anthropic", "deepseek", or "local"
+TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "gemini")  # "gemini", "anthropic", "deepseek", "local", or "claude_agent"
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+# For TRANSLATION_PROVIDER=claude_agent: drives the Claude Code CLI (via the Claude Agent SDK) as
+# a local subprocess instead of calling the Anthropic API directly. Auth is whatever the CLI
+# itself is configured with on this machine - run `claude login` once to use a Claude
+# subscription instead of metered API billing - not ANTHROPIC_API_KEY above, which is only read
+# by the "anthropic" provider. Leave unset to let the CLI use its own default model.
+CLAUDE_AGENT_MODEL = os.getenv("CLAUDE_AGENT_MODEL", "")
+
+# The SDK finds the `claude` binary via shutil.which() on the process's own PATH by default -
+# fine for an interactive shell, but a service/system account (e.g. running the backend as a
+# Windows service or systemd unit) often has a different PATH that doesn't include wherever
+# `npm install -g` put it. Set this to the CLI's full path (e.g. output of `where claude` /
+# `which claude`) to bypass the PATH search entirely. Leave unset to keep using PATH lookup.
+CLAUDE_AGENT_CLI_PATH = os.getenv("CLAUDE_AGENT_CLI_PATH", "")
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")

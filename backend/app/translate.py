@@ -164,6 +164,78 @@ def _translate_batch_anthropic(texts: List[str], source_lang: str) -> List[str]:
     return _parse_json_objects(raw, len(texts))
 
 
+def _translate_batch_claude_agent(texts: List[str], source_lang: str) -> List[str]:
+    """Uses the Claude Agent SDK, which drives the Claude Code CLI as a local subprocess, as a
+    plain text-in/text-out translation call - same prompts/parsing as _translate_batch_anthropic,
+    just a different transport. No tools are granted (subtitle text is untrusted third-party
+    content, and there's nothing here for a tool to do), so this never touches the filesystem or
+    network beyond the CLI's own call to Anthropic. Auth is whatever the CLI itself is configured
+    with (an API key via its own env, or a `claude login` subscription session) - never passed
+    through here."""
+    import asyncio
+
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ClaudeAgentOptions,
+        CLINotFoundError,
+        ResultMessage,
+        SystemMessage,
+        TextBlock,
+        query,
+    )
+
+    options = ClaudeAgentOptions(
+        system_prompt=_system_prompt(),
+        # tools=[] means the agent never has anything to request permission for, so
+        # permission_mode is left at its default rather than forced to "bypassPermissions"
+        # (which the CLI refuses outright when running as root, as this backend may well do).
+        tools=[],
+        setting_sources=[],
+        model=config.CLAUDE_AGENT_MODEL or None,
+        # Skips the PATH search (shutil.which("claude")) when set - needed when whatever runs
+        # this backend has a different PATH than the shell `claude login` was run from.
+        cli_path=config.CLAUDE_AGENT_CLI_PATH or None,
+    )
+
+    async def _run():
+        reply_text = ""
+        info: dict = {}
+        async for message in query(prompt=_user_prompt(texts, source_lang), options=options):
+            if isinstance(message, SystemMessage) and message.subtype == "init":
+                # The earliest confirmation the CLI subprocess actually spawned, connected, and
+                # accepted the job - logged so a batch that hangs afterward is visibly stuck
+                # inside the agent's own turn, not stuck failing to start.
+                session_id = (message.data or {}).get("session_id")
+                logger.info("claude_agent subprocess started session_id=%s lines=%d", session_id, len(texts))
+            elif isinstance(message, AssistantMessage):
+                if message.error:
+                    raise RuntimeError(f"Claude Code agent error: {message.error}")
+                reply_text = "".join(b.text for b in message.content if isinstance(b, TextBlock))
+                usage = message.usage or {}
+                info = {
+                    "model": message.model,
+                    "input_tokens": usage.get("input_tokens"),
+                    "output_tokens": usage.get("output_tokens"),
+                    "stop_reason": message.stop_reason,
+                }
+            elif isinstance(message, ResultMessage) and message.is_error:
+                raise RuntimeError(f"Claude Code agent failed: {message.result or message.subtype}")
+        return reply_text, info
+
+    try:
+        raw, info = asyncio.run(_run())
+    except CLINotFoundError as exc:
+        raise RuntimeError(
+            "Claude Code CLI not found. Install it (npm install -g @anthropic-ai/claude-code) "
+            "and run `claude login` once on this machine (or set ANTHROPIC_API_KEY for the CLI "
+            "itself), set CLAUDE_AGENT_CLI_PATH if it's installed but not on this process's "
+            "PATH, or switch TRANSLATION_PROVIDER to something else."
+        ) from exc
+
+    _record_call_info(**info)
+    return _parse_json_objects(raw, len(texts))
+
+
 def _quota_violations(exc: Exception) -> List[dict]:
     """Flattens the QuotaFailure violations out of a Gemini 429 error's details, if any."""
     details = getattr(exc, "details", None)
@@ -376,8 +448,11 @@ def _translate_batch_once(
         return _translate_batch_deepseek(texts, source_lang)
     if provider == "local":
         return _translate_batch_local(texts, source_lang, model)
+    if provider == "claude_agent":
+        return _translate_batch_claude_agent(texts, source_lang)
     raise RuntimeError(
-        f"Unknown translation provider {provider!r}; use 'gemini', 'anthropic', 'deepseek', or 'local'."
+        f"Unknown translation provider {provider!r}; use 'gemini', 'anthropic', 'deepseek', "
+        "'local', or 'claude_agent'."
     )
 
 

@@ -50,6 +50,22 @@ Edit `backend/.env` to choose a translation provider:
   the web app fetches whatever models that server currently has loaded and shows them in a
   **Local LLM model** dropdown next to the URL field, so you can switch models per request.
   Quality depends entirely on the model you have loaded.
+- **`TRANSLATION_PROVIDER=claude_agent`** (uses a Claude subscription instead of API billing):
+  runs the Claude Code CLI locally as a subprocess (via the Claude Agent SDK) instead of
+  calling the Anthropic API directly. No tools are granted to it — it's a plain text-in/
+  text-out translation call, same prompts as the `anthropic` provider, just a different
+  transport. Setup:
+  1. Install Node.js, then the CLI: `npm install -g @anthropic-ai/claude-code`.
+  2. Run `claude login` once on this machine and sign in with your Claude account — this uses
+     your subscription's usage allowance, not the pay-per-token API (no `ANTHROPIC_API_KEY`
+     needed for this provider; that variable is only read by `TRANSLATION_PROVIDER=anthropic`).
+  3. Optionally set `CLAUDE_AGENT_MODEL` in `.env` to pin a specific model; leave it blank to
+     use the CLI's own default.
+
+  Since this is a subscription login rather than a portable API key, it only works on a
+  machine where you've personally run `claude login` — it won't work out of the box on a
+  server someone else deploys. Subscription usage also has its own rate/usage caps, separate
+  from the API's, worth watching if you're batch-translating a lot of videos.
 
 Only the key for the provider you selected is required.
 
@@ -169,6 +185,9 @@ See [backlog.md](backlog.md) for known open issues (e.g. YouTube's yt-dlp bot-wa
   A ~1-hour dialogue-heavy episode (~500 caption lines) costs roughly $0.10-0.15; a short MV
   with sparse lyrics costs a fraction of a cent. Charged once per video — cached re-processing
   is free.
+- **Claude Code** (`claude_agent`): no per-token API charge — it draws on your Claude
+  subscription's usage allowance instead (via `claude login`), so cost isn't measured in
+  dollars here, but subscription usage caps still apply.
 - **DeepSeek** (`deepseek-chat`): pay-as-you-go, roughly $0.28/1M input tokens + $0.42/1M output
   tokens (standard pricing; DeepSeek also runs cheaper off-peak discounts) — well under a cent
   per video, with no daily request cap to hit. Check https://api-docs.deepseek.com/quick_start/pricing

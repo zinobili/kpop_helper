@@ -3,6 +3,7 @@ uvicorn[standard]
 yt-dlp
 httpx
 anthropic
+claude-agent-sdk
 google-genai
 python-dotenv
 faster-whisper

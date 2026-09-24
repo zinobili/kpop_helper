@@ -37,7 +37,7 @@ class ProcessRequest(BaseModel):
     skip_translation: bool = False  # output the original-language transcript, no LLM call
     caption_lang: Optional[Literal["ko", "en"]] = None  # None = auto (Korean preferred)
     llm_model: Optional[str] = None  # only used when translation_provider resolves to "local"
-    translation_provider: Optional[Literal["gemini", "anthropic", "deepseek", "local"]] = None
+    translation_provider: Optional[Literal["gemini", "anthropic", "deepseek", "local", "claude_agent"]] = None
     # ^ None = use the .env default (TRANSLATION_PROVIDER)
 
 
@@ -108,7 +108,7 @@ def translate_preview(
     url: str,
     caption_lang: Optional[Literal["ko", "en"]] = None,
     force_stt: bool = False,
-    translation_provider: Optional[Literal["gemini", "anthropic", "deepseek", "local"]] = None,
+    translation_provider: Optional[Literal["gemini", "anthropic", "deepseek", "local", "claude_agent"]] = None,
     llm_model: Optional[str] = None,
 ):
     """What a /process call with these settings would do, without doing any of the expensive

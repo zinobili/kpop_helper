@@ -159,6 +159,65 @@ def test_translate_batch_local_falls_back_to_configured_model(monkeypatch):
     assert captured["json"]["model"] == "default-model"
 
 
+def test_translate_batch_claude_agent_parses_assistant_reply(monkeypatch):
+    import claude_agent_sdk as sdk
+
+    captured = {}
+
+    async def fake_query(*, prompt, options):
+        captured["prompt"] = prompt
+        captured["options"] = options
+        yield sdk.AssistantMessage(
+            content=[sdk.TextBlock(text=json.dumps([{"i": 0, "t": "你好"}]))],
+            model="claude-sonnet-5",
+            usage={"input_tokens": 42, "output_tokens": 7},
+            stop_reason="end_turn",
+        )
+
+    monkeypatch.setattr(sdk, "query", fake_query)
+
+    result = translate._translate_batch_claude_agent(["hi"], "ko")
+
+    assert result == ["你好"]
+    assert captured["options"].tools == []
+    assert "hi" in captured["prompt"]
+    info = _take_call_info()
+    assert info == {
+        "model": "claude-sonnet-5",
+        "input_tokens": 42,
+        "output_tokens": 7,
+        "thinking_tokens": None,
+        "stop_reason": "end_turn",
+    }
+
+
+def test_translate_batch_claude_agent_raises_on_assistant_error(monkeypatch):
+    import claude_agent_sdk as sdk
+
+    async def fake_query(*, prompt, options):
+        yield sdk.AssistantMessage(
+            content=[], model="claude-sonnet-5", error="authentication_failed"
+        )
+
+    monkeypatch.setattr(sdk, "query", fake_query)
+
+    with pytest.raises(RuntimeError, match="authentication_failed"):
+        translate._translate_batch_claude_agent(["hi"], "ko")
+
+
+def test_translate_batch_claude_agent_raises_readable_error_when_cli_missing(monkeypatch):
+    import claude_agent_sdk as sdk
+
+    async def fake_query(*, prompt, options):
+        raise sdk.CLINotFoundError()
+        yield  # pragma: no cover - makes this an async generator
+
+    monkeypatch.setattr(sdk, "query", fake_query)
+
+    with pytest.raises(RuntimeError, match="Claude Code CLI not found"):
+        translate._translate_batch_claude_agent(["hi"], "ko")
+
+
 def test_translate_batch_once_provider_override_wins_over_config_default(monkeypatch):
     monkeypatch.setattr(config, "TRANSLATION_PROVIDER", "deepseek")
     monkeypatch.setattr(config, "LOCAL_LLM_MODEL", "fallback-model")
