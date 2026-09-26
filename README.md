@@ -1,4 +1,14 @@
-# kpop_helper
+# Once Translator
+
+*Twice in the video, translation in Once.*
+
+**Web app** - paste a link, watch with synced subtitles, and see every processed video:
+
+![Once Translator web app](docs/images/web-app.png)
+
+**On YouTube** - the Chrome extension overlays Traditional Chinese subtitles right on the video:
+
+![Once Translator on YouTube](docs/images/youtube-overlay.webp)
 
 Watch K-pop YouTube videos with Traditional Chinese subtitles, translated with an LLM for
 fandom-aware nuance, instead of relying on Korean audio or English captions.

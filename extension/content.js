@@ -102,8 +102,12 @@
 
     const settingsBtn = document.createElement("button");
     settingsBtn.id = "kh-settings-btn";
-    settingsBtn.textContent = "⚙";
+    // Static markup (no user data), so innerHTML is safe here.
+    settingsBtn.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+      '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>';
     settingsBtn.title = "Subtitle appearance";
+    settingsBtn.setAttribute("aria-label", "Subtitle appearance");
     settingsBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       settingsPanel.classList.toggle("kh-open");
