@@ -1,59 +1,95 @@
+/* Once Translator overlay - strictly black and white so it never competes with the video. */
+
 #kh-control {
   position: absolute;
   top: 12px;
   right: 12px;
   z-index: 75;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  align-items: stretch;
+  border: 1.5px solid #fff;
+  background: #111;
+  font-family: "Instrument Sans", "Segoe UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif;
 }
+
+/* DOM order is button, select, settings, status - show status first and the main button last. */
+#kh-status { order: 0; }
+#kh-caption-lang { order: 1; }
+#kh-settings-btn { order: 2; }
+#kh-control > button:first-child { order: 3; }
 
 #kh-control button {
-  background: #ff5c8a;
-  color: #1a0510;
+  height: 32px;
   border: none;
-  padding: 6px 12px;
-  border-radius: 16px;
-  font-weight: 600;
-  font-size: 12px;
+  border-radius: 0;
+  margin: 0;
   cursor: pointer;
+  font-family: inherit;
 }
 
-#kh-control button:disabled {
-  background: #7a2f45;
-  color: #ccc;
+/* Main 翻譯 / 隱藏字幕 / 顯示字幕 button. */
+#kh-control > button:first-child {
+  padding: 0 16px;
+  background: #fff;
+  color: #111;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif;
+}
+
+#kh-control > button:first-child:hover { background: #ddd; }
+
+#kh-control > button:first-child:disabled {
+  background: #333;
+  color: #999;
   cursor: not-allowed;
 }
 
 #kh-caption-lang {
-  background: rgba(0, 0, 0, 0.5);
-  color: #eee;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 16px;
-  padding: 5px 6px;
-  font-size: 11px;
+  height: 32px;
+  border: none;
+  border-right: 1px solid #555;
+  border-radius: 0;
+  background: #111;
+  color: #fff;
+  padding: 0 6px;
+  font: 500 12px ui-monospace, Consolas, "IBM Plex Mono", monospace;
   cursor: pointer;
 }
 
-#kh-settings-btn {
-  padding: 6px 10px;
-  font-size: 14px;
-  line-height: 1;
+#kh-control #kh-settings-btn {
+  width: 34px;
+  padding: 0;
+  background: #111;
+  color: #fff;
+  border-right: 1px solid #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#kh-control #kh-settings-btn:hover { background: #2a2a2a; }
+#kh-settings-btn svg { display: block; }
+
+#kh-control button:focus-visible,
+#kh-caption-lang:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -4px;
 }
 
 #kh-settings-panel {
   display: none;
   position: absolute;
   top: 100%;
-  right: 0;
+  right: -1.5px;
   margin-top: 6px;
-  background: rgba(20, 20, 20, 0.92);
-  border-radius: 10px;
-  padding: 10px 12px;
-  gap: 8px;
+  background: #fff;
+  border: 1.5px solid #111;
+  box-shadow: 4px 4px 0 #111;
+  padding: 12px;
+  gap: 10px;
   flex-direction: column;
-  min-width: 160px;
+  min-width: 180px;
 }
 
 #kh-settings-panel.kh-open {
@@ -63,22 +99,26 @@
 #kh-settings-panel label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #eee;
-  font-size: 11px;
+  gap: 10px;
+  color: #111;
+  font: 500 11px ui-monospace, Consolas, "IBM Plex Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 #kh-settings-panel input[type="range"] {
   flex: 1;
+  accent-color: #111;
 }
 
 #kh-status {
   position: relative;
-  background: rgba(0, 0, 0, 0.65);
-  color: #eee;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-right: 1px solid #555;
+  color: #fff;
+  font: 500 11px ui-monospace, Consolas, "IBM Plex Mono", monospace;
   max-width: 240px;
   white-space: nowrap;
   overflow: hidden;
@@ -87,19 +127,18 @@
 
 #kh-status:empty { display: none; }
 
-/* Full, untruncated message shown on hover - the pill itself truncates with an ellipsis. */
+/* Full, untruncated message shown on hover - the status itself truncates with an ellipsis. */
 #kh-status[data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
   top: 100%;
   right: 0;
   margin-top: 6px;
-  background: rgba(0, 0, 0, 0.9);
-  color: #fff;
+  background: #fff;
+  color: #111;
+  border: 1.5px solid #111;
   padding: 6px 10px;
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.4;
+  font: 400 12px/1.4 "Segoe UI", "Microsoft JhengHei", sans-serif;
   white-space: normal;
   width: max-content;
   max-width: 320px;
@@ -131,9 +170,10 @@
   background: rgba(0, 0, 0, var(--kh-bg-opacity, 0.72));
   color: #fff;
   font-size: var(--kh-font-size, 22px);
+  font-weight: 700;
   line-height: 1.4;
   padding: 4px 14px;
-  border-radius: 4px;
   white-space: pre-wrap;
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }

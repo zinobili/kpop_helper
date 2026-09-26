@@ -5,11 +5,13 @@ const forceSttInput = document.getElementById("forceStt");
 const skipTranslationInput = document.getElementById("skipTranslation");
 const saveBtn = document.getElementById("saveBtn");
 const savedEl = document.getElementById("saved");
+const dashboardLink = document.getElementById("dashboardLink");
 
 chrome.storage.sync.get(
   { backendUrl: DEFAULT_BACKEND_URL, forceStt: false, skipTranslation: false },
   ({ backendUrl, forceStt, skipTranslation }) => {
     input.value = backendUrl;
+    dashboardLink.href = backendUrl;
     forceSttInput.checked = forceStt;
     skipTranslationInput.checked = skipTranslation;
   }
@@ -24,6 +26,7 @@ saveBtn.addEventListener("click", () => {
       skipTranslation: skipTranslationInput.checked,
     },
     () => {
+      dashboardLink.href = backendUrl;
       savedEl.textContent = "Saved.";
       setTimeout(() => (savedEl.textContent = ""), 1500);
     }
