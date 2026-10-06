@@ -41,7 +41,12 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_MAX_RETRIES = int(os.getenv("DEEPSEEK_MAX_RETRIES", "5"))
 # "disabled" or "enabled". deepseek-flash/deepseek-v4-pro think by default, and the reasoning
 # tokens are billed as output - for subtitle translation that was ~96% of output tokens.
-DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "disabled")
+DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "disabled").strip().lower()
+# The API rejects anything else with a 422, so map common on/off spellings to its values.
+DEEPSEEK_THINKING = {"off": "disabled", "false": "disabled", "no": "disabled", "0": "disabled",
+                     "on": "enabled", "true": "enabled", "yes": "enabled", "1": "enabled"}.get(
+    DEEPSEEK_THINKING, DEEPSEEK_THINKING
+)
 
 # For TRANSLATION_PROVIDER=local: any OpenAI-compatible chat-completions server running on
 # your machine (Ollama, LM Studio, llama.cpp server, etc). Unlike the other providers, the
