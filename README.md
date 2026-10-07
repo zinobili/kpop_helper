@@ -13,6 +13,53 @@
 Watch K-pop YouTube videos with Traditional Chinese subtitles, translated with an LLM for
 fandom-aware nuance, instead of relying on Korean audio or English captions.
 
+## SAD
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        WEB["Web app<br/>(static/index.html)"]
+        EXT["Chrome extension<br/>content.js → background.js"]
+        CLI["CLI<br/>(cli.py)"]
+    end
+
+    subgraph Backend["FastAPI backend (local)"]
+        API["REST API<br/>main.py"]
+        JOBS["Job runner<br/>jobs.py (threads)"]
+        PIPE["Pipeline<br/>pipeline.py"]
+        CAP["Captions<br/>captions.py (yt-dlp)"]
+        STT["Whisper STT<br/>transcribe.py"]
+        TR["Translator<br/>translate.py + rate limiter"]
+        GLOS[("Glossary<br/>glossary.json")]
+        DB[("SQLite cache<br/>transcripts · translations · batch checkpoints")]
+    end
+
+    YT(["YouTube"])
+    LLM(["LLM provider<br/>Gemini · Anthropic · DeepSeek ·<br/>Claude Code CLI · Local (Ollama / LM Studio)"])
+
+    WEB -->|"POST /process, poll /jobs"| API
+    EXT -->|"same API, via service worker"| API
+    CLI --> PIPE
+    API --> JOBS --> PIPE
+    PIPE --> CAP --> YT
+    PIPE -->|"no captions / Force STT"| STT --> YT
+    PIPE --> TR --> LLM
+    TR --> GLOS
+    PIPE <--> DB
+```
+
+- **Three clients, one backend:** the web app and Chrome extension call the same local
+  FastAPI server; the CLI runs the pipeline directly without the server.
+- **Async jobs:** `POST /process` returns a `job_id` immediately and runs the pipeline in a
+  background thread; clients poll `/jobs/{id}` for progress.
+- **Source-text fallback:** YouTube captions (Korean → English, manual before auto) first,
+  local Whisper transcription only when there are none.
+- **Pluggable translation:** one translator module with swappable LLM providers, a shared
+  glossary for consistent names/slang, and rate limiting for free-tier quotas.
+- **Two-level cache:** transcripts and translations are cached separately in SQLite (one
+  transcript can have several provider/model variants), and per-batch checkpoints let a failed
+  job resume instead of re-paying for finished batches.
+
 ## Status
 
 **Stage 1**: backend pipeline, usable via CLI or a local API. **Done.**
